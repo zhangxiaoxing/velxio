@@ -91,6 +91,57 @@
         "desc": "Pour des produits propriétaires, du SaaS commercial, ou un usage interne en entreprise où la réciprocité AGPLv3 ne correspond pas à votre modèle économique.",
         "cta": "Nous contacter pour les tarifs →"
       }
+    },
+    "ai": {
+      "label": "Agent IA",
+      "title": "Propulsé par des agents IA.",
+      "subtitle": "Un agent multi-étapes tourne dans l’éditeur. Il lit votre canvas, écrit du code, place des composants et les câble — le tout guidé par langage naturel. DeepSeek-V4-Flash et Gemini 2.5 sous le capot.",
+      "cards": {
+        "wire": {
+          "title": "Déposer et câbler",
+          "desc": "Demandez \"ajoute un bouton sur D2 avec une résistance pull-up à 5V\". L’agent choisit les pièces, les place, connecte chaque broche et nomme les fils."
+        },
+        "code": {
+          "title": "Génère du code qui marche",
+          "desc": "Décrivez ce que la carte doit faire, l’agent écrit le code Arduino / MicroPython, le compile et le charge — pas de copier-coller depuis le chat."
+        },
+        "debug": {
+          "title": "Diagnostique les circuits en direct",
+          "desc": "Bloqué sur un câblage ? Envoyez un screenshot du canvas et l’agent lit le schéma, lance la sim et vous dit quel pin est faux."
+        }
+      }
+    },
+    "pricing": {
+      "label": "Tarifs",
+      "title": "Gratuit pour les circuits. Payez pour l’IA.",
+      "subtitle": "Le simulateur reste gratuit pour toujours. Les abonnements augmentent uniquement la limite quotidienne de l’agent IA.",
+      "popular": "Le plus populaire",
+      "tiers": {
+        "free": {
+          "name": "Free",
+          "tagline": "Tout le simulateur, pour toujours.",
+          "f1": "20 messages IA par jour",
+          "f2": "Toutes les cartes, tous les composants",
+          "f3": "Sauvegarde et partage de projets",
+          "cta": "Ouvrir l’éditeur"
+        },
+        "pro": {
+          "name": "Pro",
+          "tagline": "Pour les makers en projets réels.",
+          "f1": "300 messages IA par jour",
+          "f2": "Compilation + simulation plus rapides",
+          "f3": "Support email prioritaire",
+          "cta": "S’abonner à Pro"
+        },
+        "pro_max": {
+          "name": "Pro Max",
+          "tagline": "Pour power users et petites équipes.",
+          "f1": "700 messages IA par jour",
+          "f2": "Accès anticipé aux nouvelles cartes",
+          "f3": "Chat dédié avec le mainteneur",
+          "cta": "Choisir Pro Max"
+        }
+      }
     }
   },
   "profile": {

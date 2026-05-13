@@ -1183,6 +1183,89 @@ export const LandingPage: React.FC = () => {
         </div>
       </section>
 
+      {/* AI agent */}
+      <section className="landing-section landing-ai">
+        <div className="section-header">
+          <span className="section-label">{t('landing.ai.label')}</span>
+          <h2 className="section-title">{t('landing.ai.title')}</h2>
+          <p className="section-sub">{t('landing.ai.subtitle')}</p>
+        </div>
+        <div className="ai-grid">
+          <div className="ai-card">
+            <h3 className="ai-card-title">{t('landing.ai.cards.wire.title')}</h3>
+            <p className="ai-card-desc">{t('landing.ai.cards.wire.desc')}</p>
+          </div>
+          <div className="ai-card">
+            <h3 className="ai-card-title">{t('landing.ai.cards.code.title')}</h3>
+            <p className="ai-card-desc">{t('landing.ai.cards.code.desc')}</p>
+          </div>
+          <div className="ai-card">
+            <h3 className="ai-card-title">{t('landing.ai.cards.debug.title')}</h3>
+            <p className="ai-card-desc">{t('landing.ai.cards.debug.desc')}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing */}
+      <section className="landing-section landing-section-alt landing-pricing">
+        <div className="section-header">
+          <span className="section-label">{t('landing.pricing.label')}</span>
+          <h2 className="section-title">{t('landing.pricing.title')}</h2>
+          <p className="section-sub">{t('landing.pricing.subtitle')}</p>
+        </div>
+        <div className="pricing-grid">
+          <div className="pricing-card">
+            <div className="pricing-card-name">{t('landing.pricing.tiers.free.name')}</div>
+            <div className="pricing-card-price">
+              <span className="pricing-card-amount">$0</span>
+              <span className="pricing-card-period">/mo</span>
+            </div>
+            <p className="pricing-card-tagline">{t('landing.pricing.tiers.free.tagline')}</p>
+            <ul className="pricing-card-features">
+              <li>{t('landing.pricing.tiers.free.f1')}</li>
+              <li>{t('landing.pricing.tiers.free.f2')}</li>
+              <li>{t('landing.pricing.tiers.free.f3')}</li>
+            </ul>
+            <Link to={localize('/editor')} className="pricing-card-cta pricing-card-cta-secondary">
+              {t('landing.pricing.tiers.free.cta')}
+            </Link>
+          </div>
+          <div className="pricing-card pricing-card-featured">
+            <div className="pricing-card-badge">{t('landing.pricing.popular')}</div>
+            <div className="pricing-card-name">{t('landing.pricing.tiers.pro.name')}</div>
+            <div className="pricing-card-price">
+              <span className="pricing-card-amount">$15</span>
+              <span className="pricing-card-period">/mo</span>
+            </div>
+            <p className="pricing-card-tagline">{t('landing.pricing.tiers.pro.tagline')}</p>
+            <ul className="pricing-card-features">
+              <li>{t('landing.pricing.tiers.pro.f1')}</li>
+              <li>{t('landing.pricing.tiers.pro.f2')}</li>
+              <li>{t('landing.pricing.tiers.pro.f3')}</li>
+            </ul>
+            <Link to={localize('/pricing')} className="pricing-card-cta pricing-card-cta-primary">
+              {t('landing.pricing.tiers.pro.cta')}
+            </Link>
+          </div>
+          <div className="pricing-card">
+            <div className="pricing-card-name">{t('landing.pricing.tiers.pro_max.name')}</div>
+            <div className="pricing-card-price">
+              <span className="pricing-card-amount">$35</span>
+              <span className="pricing-card-period">/mo</span>
+            </div>
+            <p className="pricing-card-tagline">{t('landing.pricing.tiers.pro_max.tagline')}</p>
+            <ul className="pricing-card-features">
+              <li>{t('landing.pricing.tiers.pro_max.f1')}</li>
+              <li>{t('landing.pricing.tiers.pro_max.f2')}</li>
+              <li>{t('landing.pricing.tiers.pro_max.f3')}</li>
+            </ul>
+            <Link to={localize('/pricing')} className="pricing-card-cta pricing-card-cta-secondary">
+              {t('landing.pricing.tiers.pro_max.cta')}
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Support */}
       <section className="landing-support">
         <div className="support-content">

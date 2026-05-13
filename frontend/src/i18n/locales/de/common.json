@@ -91,6 +91,57 @@
         "desc": "Für Closed-Source-Produkte, proprietäre SaaS oder interne Unternehmensnutzung, bei denen die AGPLv3-Reziprozität mit Ihrem Geschäftsmodell nicht vereinbar ist.",
         "cta": "Preise anfragen →"
       }
+    },
+    "ai": {
+      "label": "KI-Agent",
+      "title": "Angetrieben von KI-Agenten.",
+      "subtitle": "Ein Multi-Step-Agent läuft im Editor. Er liest dein Canvas, schreibt Code, platziert Bauteile und verkabelt sie — alles per natürlicher Sprache. DeepSeek-V4-Flash und Gemini 2.5 unter der Haube.",
+      "cards": {
+        "wire": {
+          "title": "Bauteile platzieren & verdrahten",
+          "desc": "Sag \"füg einen Taster an D2 mit Pull-up zu 5V hinzu\". Der Agent wählt die Teile, setzt sie aufs Canvas, verbindet jeden Pin und benennt die Leitungen."
+        },
+        "code": {
+          "title": "Lauffähige Sketches",
+          "desc": "Beschreib was das Board tun soll, der Agent schreibt den Arduino-/MicroPython-Code, kompiliert und lädt ihn — kein Copy-Paste aus dem Chat."
+        },
+        "debug": {
+          "title": "Live-Schaltungen diagnostizieren",
+          "desc": "Bei einem Verdrahtungsbug stecken geblieben? Schick einen Canvas-Screenshot, der Agent liest den Schaltplan, simuliert und sagt dir welcher Pin falsch ist."
+        }
+      }
+    },
+    "pricing": {
+      "label": "Preise",
+      "title": "Schaltungen kostenlos. Du zahlst für die KI.",
+      "subtitle": "Der Simulator bleibt für immer kostenlos. Abos erhöhen nur das tägliche Nachrichtenkontingent des KI-Agenten.",
+      "popular": "Am beliebtesten",
+      "tiers": {
+        "free": {
+          "name": "Free",
+          "tagline": "Der gesamte Simulator, für immer.",
+          "f1": "20 KI-Nachrichten pro Tag",
+          "f2": "Alle Boards, alle Komponenten",
+          "f3": "Projekte speichern und teilen",
+          "cta": "Editor öffnen"
+        },
+        "pro": {
+          "name": "Pro",
+          "tagline": "Für Maker mit echten Projekten.",
+          "f1": "300 KI-Nachrichten pro Tag",
+          "f2": "Schnellere Kompilierung + Simulation",
+          "f3": "Priorisierter E-Mail-Support",
+          "cta": "Pro abonnieren"
+        },
+        "pro_max": {
+          "name": "Pro Max",
+          "tagline": "Für Power-User und kleine Teams.",
+          "f1": "700 KI-Nachrichten pro Tag",
+          "f2": "Früher Zugriff auf neue Boards",
+          "f3": "Direkter Chat mit dem Maintainer",
+          "cta": "Pro Max wählen"
+        }
+      }
     }
   },
   "profile": {

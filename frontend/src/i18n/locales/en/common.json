@@ -91,6 +91,57 @@
         "desc": "For closed-source products, proprietary SaaS, or internal company use where AGPLv3 reciprocity is incompatible with your business model.",
         "cta": "Contact for pricing →"
       }
+    },
+    "ai": {
+      "label": "AI agent",
+      "title": "Powered by AI agents.",
+      "subtitle": "A multi-step agent runs inside the editor. It reads your canvas, writes code, places parts and wires them up — all driven by natural language. DeepSeek-V4-Flash and Gemini 2.5 under the hood.",
+      "cards": {
+        "wire": {
+          "title": "Drop & wire components",
+          "desc": "Ask \"add a button on D2 with a pull-up to 5V\". The agent picks the parts, drops them on the canvas, connects every pin and labels the wires."
+        },
+        "code": {
+          "title": "Generate working sketches",
+          "desc": "Describe what you want the board to do and the agent writes the Arduino / MicroPython code, compiles it, and loads the firmware — no copy-paste from the chat."
+        },
+        "debug": {
+          "title": "Diagnose live circuits",
+          "desc": "Stuck on a wiring bug? Share the canvas screenshot and the agent reads the schematic, runs a sim, and tells you which pin is wrong."
+        }
+      }
+    },
+    "pricing": {
+      "label": "Pricing",
+      "title": "Free to run circuits. Pay for the AI.",
+      "subtitle": "The simulator stays free forever. Subscriptions only raise the AI agent’s daily message quota.",
+      "popular": "Most popular",
+      "tiers": {
+        "free": {
+          "name": "Free",
+          "tagline": "Everything in the simulator, forever.",
+          "f1": "20 AI messages per day",
+          "f2": "All boards, all components",
+          "f3": "Save and share projects",
+          "cta": "Open the editor"
+        },
+        "pro": {
+          "name": "Pro",
+          "tagline": "For makers building real projects.",
+          "f1": "300 AI messages per day",
+          "f2": "Faster compile + simulation",
+          "f3": "Priority email support",
+          "cta": "Subscribe to Pro"
+        },
+        "pro_max": {
+          "name": "Pro Max",
+          "tagline": "For power users and small teams.",
+          "f1": "700 AI messages per day",
+          "f2": "Early access to new boards",
+          "f3": "Dedicated chat with the maintainer",
+          "cta": "Choose Pro Max"
+        }
+      }
     }
   },
   "profile": {

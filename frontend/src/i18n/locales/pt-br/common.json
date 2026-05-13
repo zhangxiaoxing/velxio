@@ -91,6 +91,57 @@
         "desc": "Para produtos de código fechado, SaaS proprietário ou uso interno corporativo onde a reciprocidade da AGPLv3 não combina com o modelo de negócio.",
         "cta": "Contate para preços →"
       }
+    },
+    "ai": {
+      "label": "Agente IA",
+      "title": "Movido por agentes de IA.",
+      "subtitle": "Um agente multi-etapas roda dentro do editor. Ele lê seu canvas, escreve código, coloca componentes e os conecta — tudo guiado por linguagem natural. DeepSeek-V4-Flash e Gemini 2.5 por baixo.",
+      "cards": {
+        "wire": {
+          "title": "Encaixe e conecte",
+          "desc": "Peça \"adicione um botão em D2 com pull-up para 5V\". O agente escolhe os componentes, os coloca no canvas, conecta cada pino e rotula os fios."
+        },
+        "code": {
+          "title": "Sketches que funcionam",
+          "desc": "Descreva o que a placa deve fazer e o agente escreve o código Arduino / MicroPython, compila e carrega — sem copiar-colar do chat."
+        },
+        "debug": {
+          "title": "Diagnostica circuitos ao vivo",
+          "desc": "Travou em um bug de fiação? Envie um screenshot do canvas e o agente lê o esquema, roda a sim, e diz qual pino está errado."
+        }
+      }
+    },
+    "pricing": {
+      "label": "Preços",
+      "title": "Grátis para rodar circuitos. Pague pela IA.",
+      "subtitle": "O simulador continua grátis para sempre. Assinaturas apenas aumentam a cota diária do agente de IA.",
+      "popular": "Mais popular",
+      "tiers": {
+        "free": {
+          "name": "Free",
+          "tagline": "Tudo no simulador, para sempre.",
+          "f1": "20 mensagens de IA por dia",
+          "f2": "Todas as placas, todos os componentes",
+          "f3": "Salvar e compartilhar projetos",
+          "cta": "Abrir o editor"
+        },
+        "pro": {
+          "name": "Pro",
+          "tagline": "Para makers construindo projetos reais.",
+          "f1": "300 mensagens de IA por dia",
+          "f2": "Compilação + simulação mais rápida",
+          "f3": "Suporte prioritário por email",
+          "cta": "Assinar Pro"
+        },
+        "pro_max": {
+          "name": "Pro Max",
+          "tagline": "Para power users e times pequenos.",
+          "f1": "700 mensagens de IA por dia",
+          "f2": "Acesso antecipado a novas placas",
+          "f3": "Chat dedicado com o mantenedor",
+          "cta": "Escolher Pro Max"
+        }
+      }
     }
   },
   "profile": {
