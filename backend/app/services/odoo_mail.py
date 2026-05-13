@@ -2,20 +2,33 @@
 
 Velxio leans on Odoo's outgoing-mail relay (SPF/DKIM already warmed up,
 templates editable from the admin UI) instead of running its own SMTP.
-The Odoo-side endpoints live in `velxio_transactional_mail` addon:
+The Odoo-side endpoints live in `velxio_transactional_mail` (mail) and
+`velxio_subscription` (partner upsert) addons:
 
-    POST <ODOO_URL>/velxio/api/send-welcome
-    POST <ODOO_URL>/velxio/api/send-password-reset
+    POST <ODOO_URL>/velxio/api/upsert-partner       (sync, fast)
+    POST <ODOO_URL>/velxio/api/send-welcome         (async, slow — SMTP)
+    POST <ODOO_URL>/velxio/api/send-password-reset  (async, slow — SMTP)
 
-Both expect a JSON-RPC payload (Odoo's `type='json'` controllers expect
+All expect a JSON-RPC payload (Odoo's `type='jsonrpc'` controllers expect
 `{"jsonrpc": "2.0", "params": {...}}`) and authenticate via the
 `X-Velxio-API-Key` header.
 
-These helpers are designed to be called from `asyncio.create_task(...)`
-so they NEVER raise into the request lifecycle. Any failure is logged at
-WARNING level and the function returns False. The result is otherwise
-ignored — registration / forgot-password succeed even when Odoo is down,
-the user just doesn't get the email until ops re-runs the cron.
+`sync_partner` is meant to be awaited synchronously. The mail helpers
+are designed to be called from `asyncio.create_task(...)` so they NEVER
+raise into the request lifecycle. Any failure is logged at WARNING level
+and the function returns False/None. Registration / forgot-password
+succeed even when Odoo is down — the user just doesn't get the email
+until ops re-runs the cron.
+
+Why the partner upsert is split out: Odoo's transaction isolation is
+REPEATABLE READ, so two parallel mail workers for the same brand-new
+user (register followed by an immediate forgot-password) would both
+take a snapshot before either committed the partner. Both would then
+INSERT, hitting the unique constraint on velxio_user_id and rolling
+back one of the two mails. Funnelling the partner upsert through a
+single synchronous call BEFORE the async mail tasks fire serializes
+the create at the Velxio HTTP layer and dodges the snapshot race
+entirely.
 """
 from __future__ import annotations
 
@@ -71,6 +84,35 @@ async def _post(endpoint: str, params: dict) -> Optional[dict]:
         logger.warning("[odoo_mail] %s → HTTP error: %s", endpoint, exc)
     except Exception:  # noqa: BLE001 — fire-and-forget must swallow everything
         logger.exception("[odoo_mail] %s — unexpected failure", endpoint)
+    return None
+
+
+async def sync_partner(
+    *,
+    velxio_user_id: str,
+    email: str,
+    name: Optional[str] = None,
+    country_code: Optional[str] = None,
+) -> Optional[int]:
+    """Synchronously ensure the Odoo partner for this user exists.
+
+    Caller awaits this BEFORE firing any async mail tasks so the
+    welcome / reset endpoints land on a partner the upsert already
+    committed. Returns the partner_id on success, None on any failure
+    (Odoo down, network error, etc.). The caller should ignore the
+    result and proceed — the user is registered/recovered regardless.
+    """
+    params: dict = {
+        "velxio_user_id": velxio_user_id,
+        "email": email,
+    }
+    if name:
+        params["name"] = name
+    if country_code:
+        params["country_code"] = country_code
+    result = await _post("/velxio/api/upsert-partner", params)
+    if result and "partner_id" in result:
+        return int(result["partner_id"])
     return None
 
 

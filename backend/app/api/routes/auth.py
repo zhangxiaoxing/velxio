@@ -91,9 +91,20 @@ async def register(
     token = create_access_token({"sub": user.id})
     _set_auth_cookie(response, token)
 
-    # Fire-and-forget welcome mail through Odoo. Registration MUST NOT
-    # block on this — if Odoo is down the user still gets in. We snapshot
-    # the fields we need so the task isn't tied to the SQLAlchemy session.
+    # Synchronously upsert the Odoo partner BEFORE firing the async
+    # welcome. This serializes partner creation at the Velxio HTTP
+    # layer so a subsequent forgot-password (or any other mail) lands
+    # on a partner whose existence is already committed — sidestepping
+    # the REPEATABLE-READ snapshot race two parallel mail workers
+    # would otherwise hit. `sync_partner` swallows its own errors and
+    # returns None if Odoo is down, so the user is never blocked.
+    await odoo_mail.sync_partner(
+        velxio_user_id=user.id,
+        email=user.email,
+        name=user.username,
+        country_code=user.signup_country or None,
+    )
+
     asyncio.create_task(
         odoo_mail.send_welcome(
             velxio_user_id=user.id,
@@ -210,6 +221,16 @@ async def forgot_password(
     reset_url = (
         f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?token={plaintext}"
     )
+    # Same trick as register: ensure the Odoo partner exists synchronously
+    # before firing the async reset mail. Cheap (~50ms) and removes the
+    # REPEATABLE-READ snapshot race entirely.
+    await odoo_mail.sync_partner(
+        velxio_user_id=user.id,
+        email=user.email,
+        name=user.username,
+        country_code=user.signup_country or None,
+    )
+
     asyncio.create_task(
         odoo_mail.send_password_reset(
             email=user.email,
