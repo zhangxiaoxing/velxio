@@ -28,8 +28,8 @@ import type { Component } from '../../types/components';
 import type { BoardInstance } from '../../types/board';
 import './CanvasMinimap.css';
 
-const MINIMAP_W = 200;
-const MINIMAP_H = 150;
+const MINIMAP_W = 140;
+const MINIMAP_H = 105;
 const WORLD_W = 4000;
 const WORLD_H = 3000;
 const SCALE_X = MINIMAP_W / WORLD_W;

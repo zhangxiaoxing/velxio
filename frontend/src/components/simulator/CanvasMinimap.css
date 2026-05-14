@@ -53,8 +53,8 @@
  * based on the calculated rect bounds. */
 .canvas-minimap-viewport {
   position: absolute;
-  border: 1.5px solid rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(239, 68, 68, 0.95);
+  background: rgba(239, 68, 68, 0.10);
   border-radius: 2px;
   pointer-events: none;
   /* No transition on left/top — those values change every frame during
