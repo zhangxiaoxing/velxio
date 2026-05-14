@@ -27,6 +27,7 @@ import { LoginPromptModal } from '../components/layout/LoginPromptModal';
 import { GitHubStarBanner } from '../components/layout/GitHubStarBanner';
 import { useSimulatorStore, DEFAULT_BOARD_POSITION } from '../store/useSimulatorStore';
 import { useEditorStore } from '../store/useEditorStore';
+import { useCompileLogsStore } from '../store/useCompileLogsStore';
 import { useOscilloscopeStore } from '../store/useOscilloscopeStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useProjectStore } from '../store/useProjectStore';
@@ -81,7 +82,11 @@ export const EditorPage: React.FC = () => {
   const isRaspberryPi3 = activeBoardKind === 'raspberry-pi-3';
   const oscilloscopeOpen = useOscilloscopeStore((s) => s.open);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [compileLogs, setCompileLogs] = useState<CompilationLog[]>([]);
+  // compileLogs live in a Zustand store so the velxio-pro agent overlay
+  // (mounted in a separate React tree via slotMounter) can subscribe and
+  // build a "diagnose this failure" prompt without prop-drilling.
+  const compileLogs = useCompileLogsStore((s) => s.logs);
+  const setCompileLogs = useCompileLogsStore((s) => s.setLogs);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(BOTTOM_PANEL_DEFAULT);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [loginPromptOpen, setLoginPromptOpen] = useState(false);
