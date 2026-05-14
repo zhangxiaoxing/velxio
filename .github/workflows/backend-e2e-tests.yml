@@ -12,7 +12,10 @@ jobs:
     timeout-minutes: 30
 
     env:
-      QEMU_RELEASE_URL: https://github.com/davidmonterocrespo24/velxio/releases/download/qemu-prebuilt
+      # velxio.dev gated download endpoint (license module). Override
+      # via the legacy QEMU_RELEASE_URL env if you mirror the binaries
+      # to a private CDN.
+      VELXIO_BINARY_BASE_URL: https://velxio.dev/api/pro/license/downloads
       QEMU_DIR: /opt/velxio-qemu
       BACKEND_URL: http://localhost:8001
 
@@ -33,19 +36,28 @@ jobs:
             libslirp0
 
       # ── QEMU binaries + ROM files ──────────────────────────────────────────────
+      # Repository-level secret VELXIO_BUILD_LICENSE_KEY holds a free
+      # personal-tier key generated at https://velxio.dev/license/signup ;
+      # rotate via the admin panel if it leaks.
       - name: Download QEMU binaries and ROM files
+        env:
+          VELXIO_LICENSE_KEY: ${{ secrets.VELXIO_BUILD_LICENSE_KEY }}
         run: |
+          if [ -z "$VELXIO_LICENSE_KEY" ]; then
+            echo "::error ::secrets.VELXIO_BUILD_LICENSE_KEY is not set. Add it under Settings → Secrets and variables → Actions. Get a free key from https://velxio.dev/license/signup."
+            exit 1
+          fi
           mkdir -p $QEMU_DIR
           cd $QEMU_DIR
 
           echo "Downloading QEMU shared libraries..."
-          curl -fSL -o libqemu-xtensa.so  "$QEMU_RELEASE_URL/libqemu-xtensa-amd64.so"
-          curl -fSL -o libqemu-riscv32.so "$QEMU_RELEASE_URL/libqemu-riscv32-amd64.so"
+          curl -fSL -o libqemu-xtensa.so  "$VELXIO_BINARY_BASE_URL/libqemu-xtensa-amd64?key=$VELXIO_LICENSE_KEY"
+          curl -fSL -o libqemu-riscv32.so "$VELXIO_BINARY_BASE_URL/libqemu-riscv32-amd64?key=$VELXIO_LICENSE_KEY"
 
           echo "Downloading ROM files..."
-          curl -fSL -o esp32-v3-rom.bin     "$QEMU_RELEASE_URL/esp32-v3-rom.bin"
-          curl -fSL -o esp32-v3-rom-app.bin "$QEMU_RELEASE_URL/esp32-v3-rom-app.bin"
-          curl -fSL -o esp32c3-rom.bin      "$QEMU_RELEASE_URL/esp32c3-rom.bin"
+          curl -fSL -o esp32-v3-rom.bin     "$VELXIO_BINARY_BASE_URL/esp32-v3-rom?key=$VELXIO_LICENSE_KEY"
+          curl -fSL -o esp32-v3-rom-app.bin "$VELXIO_BINARY_BASE_URL/esp32-v3-rom-app?key=$VELXIO_LICENSE_KEY"
+          curl -fSL -o esp32c3-rom.bin      "$VELXIO_BINARY_BASE_URL/esp32c3-rom?key=$VELXIO_LICENSE_KEY"
 
           chmod +x libqemu-xtensa.so libqemu-riscv32.so
           ls -lh .

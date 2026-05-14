@@ -1,36 +1,90 @@
 # ---- Stage 0: QEMU .so + ROM binaries ----
-# Downloads arch-specific .so from GitHub Release (e.g. libqemu-xtensa-amd64.so)
-# and renames to libqemu-xtensa.so so the backend needs no changes.
-# Local prebuilt files (prebuilt/qemu/) are used if present.
+# The Velxio runtime needs libqemu-xtensa.so + libqemu-riscv32.so (the
+# QEMU shared libraries that simulate ESP32 / ESP32-S3 / ESP32-C3) plus
+# the matching boot ROM blobs. Three sources, tried in order:
+#
+#   1. Local prebuilt files at prebuilt/qemu/<file>.
+#      Drop your own compiled .so files in there (see docs/BUILD-QEMU.md
+#      for the full build-from-source guide) and they win — no network
+#      access required.
+#
+#   2. velxio.dev gated download endpoint, when VELXIO_LICENSE_KEY is set.
+#      Free personal-tier keys at https://velxio.dev/license/signup.
+#
+#   3. Build fails with a clear error telling you which of the two paths
+#      to pick.
+#
+# Backward compatibility: the old QEMU_RELEASE_URL ARG is still accepted
+# so forks pointing at a private mirror of the binaries keep working.
 FROM ubuntu:22.04 AS qemu-provider
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETARCH
-ARG QEMU_RELEASE_URL=https://github.com/davidmonterocrespo24/velxio/releases/download/qemu-prebuilt
+ARG VELXIO_LICENSE_KEY=
+ARG VELXIO_BINARY_BASE_URL=https://velxio.dev/api/pro/license/downloads
+# Legacy escape hatch — set this to keep using the old GitHub Release
+# mirror (or any other CDN you proxy from). When set, takes precedence
+# over the gated path.
+ARG QEMU_RELEASE_URL=
 
 # Copy the prebuilt directory (may contain .so+ROM files or just the .gitkeep)
 RUN mkdir -p /qemu
 COPY prebuilt/qemu/ /qemu/
 
-# Download arch-specific .so and arch-independent ROM files
+# Resolve which fetch path the build will use and fail-fast with a
+# friendly message if neither prebuilt files nor a key were provided.
+RUN cd /qemu \
+ && have_libs=1 && for base in libqemu-xtensa libqemu-riscv32; do \
+      [ -f "${base}.so" ] || have_libs=0 ; \
+    done \
+ && if [ "$have_libs" = "1" ]; then \
+      echo "[qemu-provider] using local prebuilt/qemu/ files — no download" ; \
+    elif [ -n "${QEMU_RELEASE_URL}" ]; then \
+      echo "[qemu-provider] using legacy QEMU_RELEASE_URL: ${QEMU_RELEASE_URL}" ; \
+    elif [ -n "${VELXIO_LICENSE_KEY}" ]; then \
+      echo "[qemu-provider] using velxio.dev gated download with provided license key" ; \
+    else \
+      echo "" ; \
+      echo "ERROR: Velxio docker build needs the QEMU runtime libraries." ; \
+      echo "" ; \
+      echo "Pick one:" ; \
+      echo "  a) Free personal key from https://velxio.dev/license/signup ," ; \
+      echo "     then re-build with --build-arg VELXIO_LICENSE_KEY=vlx_personal_..." ; \
+      echo "  b) Build QEMU yourself (see docs/BUILD-QEMU.md) and drop the .so" ; \
+      echo "     files plus the three esp32*-rom.bin files into prebuilt/qemu/." ; \
+      echo "" ; \
+      exit 1 ; \
+    fi
+
+# Download arch-specific .so and arch-independent ROM files.
+# The gated endpoint serves the same byte-for-byte content as the legacy
+# GitHub Release path; asset paths just drop the .so extension since the
+# license module's manifest carries the real filename.
 RUN cd /qemu \
  && for base in libqemu-xtensa libqemu-riscv32; do \
       f="${base}.so" ; \
-      if [ ! -f "$f" ]; then \
-        echo "Downloading ${base}-${TARGETARCH}.so → $f ..." ; \
+      if [ -f "$f" ]; then \
+        echo "Using local $f ($(stat -c%s "$f") bytes)" ; \
+      elif [ -n "${QEMU_RELEASE_URL}" ]; then \
+        echo "Downloading ${base}-${TARGETARCH}.so → $f (legacy URL) ..." ; \
         curl -fSL -o "$f" "${QEMU_RELEASE_URL}/${base}-${TARGETARCH}.so" ; \
       else \
-        echo "Using local $f ($(stat -c%s "$f") bytes)" ; \
+        echo "Downloading ${base}-${TARGETARCH} → $f (velxio.dev) ..." ; \
+        curl -fSL -o "$f" "${VELXIO_BINARY_BASE_URL}/${base}-${TARGETARCH}?key=${VELXIO_LICENSE_KEY}" ; \
       fi ; \
     done \
  && for f in esp32-v3-rom.bin esp32-v3-rom-app.bin esp32c3-rom.bin; do \
-      if [ ! -f "$f" ]; then \
-        echo "Downloading $f ..." ; \
+      asset="${f%.bin}" ; \
+      if [ -f "$f" ]; then \
+        echo "Using local $f ($(stat -c%s "$f") bytes)" ; \
+      elif [ -n "${QEMU_RELEASE_URL}" ]; then \
+        echo "Downloading $f (legacy URL) ..." ; \
         curl -fSL -o "$f" "${QEMU_RELEASE_URL}/$f" ; \
       else \
-        echo "Using local $f ($(stat -c%s "$f") bytes)" ; \
+        echo "Downloading $asset → $f (velxio.dev) ..." ; \
+        curl -fSL -o "$f" "${VELXIO_BINARY_BASE_URL}/${asset}?key=${VELXIO_LICENSE_KEY}" ; \
       fi ; \
     done \
  && ls -lh /qemu/
