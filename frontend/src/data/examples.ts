@@ -738,6 +738,243 @@ void loop() {
     ],
   },
   {
+    id: 'pico-doom-raycaster',
+    title: 'Pico Doom — Raycaster Demo',
+    description:
+      'Wolfenstein / early-Doom-style first-person 3D corridor on a Pi Pico + ILI9341 TFT. DDA raycasting at 160 rays/frame, no framebuffer (columns drawn straight to the TFT via drawFastVLine). Forward/back move, two more buttons turn the player. 16×16 tile map with 5 wall palettes (slate, blood, brown, toxic green, bronze door). The full id Software Doom needs the WAD assets shoehorned into 2 MB of flash with custom compression that the emulator cannot reproduce — this is the visual demo the Pico hardware actually runs in real life.',
+    libraries: ['Adafruit GFX Library', 'Adafruit ILI9341'],
+    category: 'games',
+    difficulty: 'advanced',
+    boardType: 'raspberry-pi-pico',
+    tags: ['pico', 'rp2040', 'doom', 'raycaster', 'tft', 'ili9341', '3d', 'game'],
+    code: `/*
+ * Pico Doom — A Wolf3D-style raycaster running on Raspberry Pi Pico.
+ *
+ * Hardware
+ *   Raspberry Pi Pico (RP2040) + ILI9341 SPI TFT (320x240, landscape)
+ *   4 pushbuttons: forward, backward, turn left, turn right
+ *
+ * Pins
+ *   SPI0:  SCK=GP18  MOSI=GP19  CS=GP17  DC=GP20  RST=GP21  LED=GP22
+ *   Buttons (active LOW, INPUT_PULLUP):
+ *          FWD=GP10  BACK=GP11  LEFT=GP12  RIGHT=GP13
+ */
+
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <math.h>
+
+#define TFT_CS    17
+#define TFT_DC    20
+#define TFT_RST   21
+#define TFT_LED   22
+#define BTN_FWD   10
+#define BTN_BACK  11
+#define BTN_LEFT  12
+#define BTN_RIGHT 13
+
+Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
+
+#define MAP_W 16
+#define MAP_H 16
+const uint8_t worldMap[MAP_H][MAP_W] = {
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+  {1,0,0,0,0,0,0,2,2,2,0,0,0,0,0,1},
+  {1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1},
+  {1,0,1,0,0,0,3,3,0,0,0,0,0,0,0,1},
+  {1,0,1,0,0,0,0,0,0,0,4,4,4,0,0,1},
+  {1,0,1,1,1,0,0,5,5,0,0,0,0,0,0,1},
+  {1,0,0,0,0,0,0,0,0,0,0,2,0,0,0,1},
+  {1,0,3,3,3,3,0,0,0,2,2,0,0,0,0,1},
+  {1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1},
+  {1,0,0,0,0,5,5,0,0,3,0,0,0,0,0,1},
+  {1,4,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,4,0,0,0,2,2,2,0,0,0,0,0,5,0,1},
+  {1,4,0,0,0,0,0,0,0,0,3,3,3,0,0,1},
+  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,0,0,4,4,4,4,4,4,0,0,0,0,0,0,1},
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+};
+
+float posX = 8.5f, posY = 8.5f;
+float dirX = -1.0f, dirY = 0.0f;
+float planeX = 0.0f, planeY = 0.66f;
+
+#define SCREEN_W 320
+#define SCREEN_H 240
+#define HUD_H    40
+#define VIEW_H   (SCREEN_H - HUD_H)
+#define HALF_VH  (VIEW_H / 2)
+#define SKY_COLOR   0x18C3
+#define FLOOR_COLOR 0x4208
+
+uint16_t wallColor(uint8_t tile, bool nsFace) {
+  uint16_t c;
+  switch (tile) {
+    case 1: c = 0x8410; break;  // slate gray
+    case 2: c = 0xC800; break;  // blood red
+    case 3: c = 0x4A60; break;  // brown
+    case 4: c = 0x32A0; break;  // toxic green
+    case 5: c = 0xFD20; break;  // bronze door
+    default: c = 0xFFFF; break;
+  }
+  if (nsFace) c = (c >> 1) & 0x7BEFu;
+  return c;
+}
+
+void drawTitleScreen() {
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setTextSize(6);
+  tft.setTextColor(0xC800);
+  tft.setCursor(60, 40);
+  tft.print("DOOM");
+  tft.setTextSize(2);
+  tft.setTextColor(0xFFE0);
+  tft.setCursor(50, 110);
+  tft.print("Pico Edition");
+  tft.setTextSize(1);
+  tft.setTextColor(0xC618);
+  tft.setCursor(40, 160);
+  tft.print("FWD/BACK move   LEFT/RIGHT turn");
+  tft.setTextSize(2);
+  tft.setTextColor(0xFFFF);
+  tft.setCursor(56, 200);
+  tft.print("Press FWD to start");
+  while (digitalRead(BTN_FWD) == HIGH) delay(40);
+  while (digitalRead(BTN_FWD) == LOW)  delay(40);
+}
+
+void drawHUD() {
+  tft.fillRect(0, SCREEN_H - HUD_H, SCREEN_W, HUD_H, 0x2104);
+  tft.drawFastHLine(0, SCREEN_H - HUD_H, SCREEN_W, 0x52AA);
+  tft.setTextSize(2);
+  tft.setTextColor(0xFFE0);
+  tft.setCursor(8, SCREEN_H - 28);
+  tft.print("HP:100  ARM:50  AMMO:50");
+}
+
+void renderFrame() {
+  tft.fillRect(0, 0,       SCREEN_W, HALF_VH, SKY_COLOR);
+  tft.fillRect(0, HALF_VH, SCREEN_W, HALF_VH, FLOOR_COLOR);
+
+  for (int x = 0; x < SCREEN_W; x += 2) {
+    float cameraX = 2.0f * x / SCREEN_W - 1.0f;
+    float rayDirX = dirX + planeX * cameraX;
+    float rayDirY = dirY + planeY * cameraX;
+
+    int mapX = (int)posX, mapY = (int)posY;
+    float deltaDistX = (rayDirX == 0) ? 1e30f : fabsf(1.0f / rayDirX);
+    float deltaDistY = (rayDirY == 0) ? 1e30f : fabsf(1.0f / rayDirY);
+
+    int stepX, stepY;
+    float sideDistX, sideDistY;
+    if (rayDirX < 0) { stepX = -1; sideDistX = (posX - mapX)        * deltaDistX; }
+    else             { stepX =  1; sideDistX = (mapX + 1.0f - posX) * deltaDistX; }
+    if (rayDirY < 0) { stepY = -1; sideDistY = (posY - mapY)        * deltaDistY; }
+    else             { stepY =  1; sideDistY = (mapY + 1.0f - posY) * deltaDistY; }
+
+    bool hit = false, nsFace = false;
+    int  iter = 0;
+    while (!hit && iter++ < 64) {
+      if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; nsFace = false; }
+      else                       { sideDistY += deltaDistY; mapY += stepY; nsFace = true;  }
+      if (mapX < 0 || mapY < 0 || mapX >= MAP_W || mapY >= MAP_H) break;
+      if (worldMap[mapY][mapX] > 0) hit = true;
+    }
+    if (!hit) continue;
+
+    float perpDist = nsFace
+      ? (mapY - posY + (1.0f - stepY) * 0.5f) / rayDirY
+      : (mapX - posX + (1.0f - stepX) * 0.5f) / rayDirX;
+    if (perpDist < 0.0001f) perpDist = 0.0001f;
+
+    int lineH = (int)(VIEW_H / perpDist);
+    int drawStart = HALF_VH - lineH / 2;
+    int drawEnd   = HALF_VH + lineH / 2;
+    if (drawStart < 0)      drawStart = 0;
+    if (drawEnd   > VIEW_H) drawEnd   = VIEW_H;
+
+    uint16_t color = wallColor(worldMap[mapY][mapX], nsFace);
+    tft.drawFastVLine(x,     drawStart, drawEnd - drawStart, color);
+    tft.drawFastVLine(x + 1, drawStart, drawEnd - drawStart, color);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(TFT_LED, OUTPUT);
+  digitalWrite(TFT_LED, HIGH);
+  pinMode(BTN_FWD,   INPUT_PULLUP);
+  pinMode(BTN_BACK,  INPUT_PULLUP);
+  pinMode(BTN_LEFT,  INPUT_PULLUP);
+  pinMode(BTN_RIGHT, INPUT_PULLUP);
+  tft.begin();
+  tft.setRotation(3);
+  drawTitleScreen();
+  tft.fillScreen(ILI9341_BLACK);
+  drawHUD();
+  Serial.println(F("Pico Doom — raycaster ready"));
+}
+
+unsigned long lastFrameMs = 0;
+const float MOVE_SPEED = 0.10f;
+const float ROT_SPEED  = 0.08f;
+
+void loop() {
+  unsigned long now = millis();
+  if (now - lastFrameMs < 100) return;
+  lastFrameMs = now;
+
+  if (digitalRead(BTN_FWD) == LOW) {
+    float nx = posX + dirX * MOVE_SPEED;
+    float ny = posY + dirY * MOVE_SPEED;
+    if (nx > 0 && nx < MAP_W && worldMap[(int)posY][(int)nx] == 0) posX = nx;
+    if (ny > 0 && ny < MAP_H && worldMap[(int)ny][(int)posX] == 0) posY = ny;
+  }
+  if (digitalRead(BTN_BACK) == LOW) {
+    float nx = posX - dirX * MOVE_SPEED;
+    float ny = posY - dirY * MOVE_SPEED;
+    if (nx > 0 && nx < MAP_W && worldMap[(int)posY][(int)nx] == 0) posX = nx;
+    if (ny > 0 && ny < MAP_H && worldMap[(int)ny][(int)posX] == 0) posY = ny;
+  }
+  auto rotate = [](float &x, float &y, float a) {
+    float ox = x;
+    x = x * cosf(a) - y * sinf(a);
+    y = ox * sinf(a) + y * cosf(a);
+  };
+  if (digitalRead(BTN_LEFT) == LOW)  { rotate(dirX, dirY,  ROT_SPEED); rotate(planeX, planeY,  ROT_SPEED); }
+  if (digitalRead(BTN_RIGHT) == LOW) { rotate(dirX, dirY, -ROT_SPEED); rotate(planeX, planeY, -ROT_SPEED); }
+  renderFrame();
+}
+`,
+    components: [
+      { type: 'wokwi-ili9341',    id: 'tft1',      x: 460, y: 60,  properties: {} },
+      { type: 'wokwi-pushbutton', id: 'btn-fwd',   x: 220, y: 420, properties: { color: 'red',   label: 'FWD'   } },
+      { type: 'wokwi-pushbutton', id: 'btn-back',  x: 220, y: 520, properties: { color: 'blue',  label: 'BACK'  } },
+      { type: 'wokwi-pushbutton', id: 'btn-left',  x: 130, y: 470, properties: { color: 'green', label: 'LEFT'  } },
+      { type: 'wokwi-pushbutton', id: 'btn-right', x: 310, y: 470, properties: { color: 'green', label: 'RIGHT' } },
+    ],
+    wires: [
+      // SPI bus + control lines to the ILI9341
+      { id: 'w-tft-sck',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP18' }, end: { componentId: 'tft1', pinName: 'SCK'  }, color: '#ff8800' },
+      { id: 'w-tft-mosi', start: { componentId: 'raspberry-pi-pico', pinName: 'GP19' }, end: { componentId: 'tft1', pinName: 'MOSI' }, color: '#ff8800' },
+      { id: 'w-tft-cs',   start: { componentId: 'raspberry-pi-pico', pinName: 'GP17' }, end: { componentId: 'tft1', pinName: 'CS'   }, color: '#00aaff' },
+      { id: 'w-tft-dc',   start: { componentId: 'raspberry-pi-pico', pinName: 'GP20' }, end: { componentId: 'tft1', pinName: 'D/C'  }, color: '#00cc00' },
+      { id: 'w-tft-rst',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP21' }, end: { componentId: 'tft1', pinName: 'RST'  }, color: '#cc0000' },
+      { id: 'w-tft-led',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP22' }, end: { componentId: 'tft1', pinName: 'LED'  }, color: '#ffffff' },
+      // Buttons signal + GND each
+      { id: 'w-btn-fwd',   start: { componentId: 'raspberry-pi-pico', pinName: 'GP10' }, end: { componentId: 'btn-fwd',   pinName: '1.l' }, color: '#ff4444' },
+      { id: 'w-btn-back',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP11' }, end: { componentId: 'btn-back',  pinName: '1.l' }, color: '#4477ff' },
+      { id: 'w-btn-left',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP12' }, end: { componentId: 'btn-left',  pinName: '1.l' }, color: '#44cc44' },
+      { id: 'w-btn-right', start: { componentId: 'raspberry-pi-pico', pinName: 'GP13' }, end: { componentId: 'btn-right', pinName: '1.l' }, color: '#cccc44' },
+      { id: 'w-gnd-fwd',   start: { componentId: 'btn-fwd',   pinName: '2.l' }, end: { componentId: 'raspberry-pi-pico', pinName: 'GND.1' }, color: '#000000' },
+      { id: 'w-gnd-back',  start: { componentId: 'btn-back',  pinName: '2.l' }, end: { componentId: 'raspberry-pi-pico', pinName: 'GND.2' }, color: '#000000' },
+      { id: 'w-gnd-left',  start: { componentId: 'btn-left',  pinName: '2.l' }, end: { componentId: 'raspberry-pi-pico', pinName: 'GND.3' }, color: '#000000' },
+      { id: 'w-gnd-right', start: { componentId: 'btn-right', pinName: '2.l' }, end: { componentId: 'raspberry-pi-pico', pinName: 'GND.4' }, color: '#000000' },
+    ],
+  },
+  {
     id: 'tft-display',
     title: 'TFT ILI9341 Display',
     description:
