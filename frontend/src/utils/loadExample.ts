@@ -13,6 +13,7 @@ import { useVfsStore } from '../store/useVfsStore';
 import { isBoardComponent } from './boardPinMapping';
 import { getInstalledLibraries, installLibrary } from '../services/libraryService';
 import { trackOpenExample } from './analytics';
+import { stripBrandPrefix } from './exampleToBuildNetlistInput';
 
 export interface LibraryInstallProgress {
   total: number;
@@ -165,7 +166,7 @@ export async function loadExample(
     setComponents(
       componentsWithoutBoard.map((comp) => ({
         id: comp.id,
-        metadataId: comp.type.replace(/^(wokwi|velxio)-/, ''),
+        metadataId: stripBrandPrefix(comp.type),
         x: comp.x,
         y: comp.y,
         properties: comp.properties,
@@ -259,7 +260,7 @@ export async function loadExample(
     setComponents(
       componentsWithoutBoard.map((comp) => ({
         id: comp.id,
-        metadataId: comp.type.replace(/^(wokwi|velxio)-/, ''),
+        metadataId: stripBrandPrefix(comp.type),
         x: comp.x,
         y: comp.y,
         properties: comp.properties,
