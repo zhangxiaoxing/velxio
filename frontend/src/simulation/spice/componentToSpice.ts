@@ -370,32 +370,21 @@ const MAPPERS: Record<string, Mapper> = {
   //
   // Input impedance is 1 MΩ differential + a 10 MΩ common-mode load so the
   // netlist never has floating inputs during DC.
-  'opamp-lm358': (comp, netLookup, ctx) => {
+  'opamp-lm358': (comp, netLookup) => {
     const inp = netLookup('IN+');
     const inn = netLookup('IN-');
     const out = netLookup('OUT');
     if (!inp || !inn || !out) return null;
-    // Phase 2.2 lesson: the full LM358 macro-model subckt is vendored at
-    // ./models/lm358Subckt.ts but doesn't converge on `.op` analysis
-    // because of its internal capacitors / inductors / poly sources.
-    // The follower test (Vin → IN+, OUT → IN-) hangs >60 s. The
-    // behavioural B-source clamp below is kept until either:
-    //   (a) the default analysis switches to `.tran` (Phase 1c WASM
-    //       loop will probably do this anyway), or
-    //   (b) we add `.options gmin=1e-10` to the netlist and confirm
-    //       convergence across all canvases.
-    // The subckt module remains exported so future work can opt in.
-    const A = 1e5;
-    const vLo = 0.05;
-    const vHi = ctx.vcc - 1.5;
+    // Phase 1d #9: real LM358 macro-model subckt enabled now that
+    // Phase 1d #2 added `.options gmin=1e-10 gminsteps=20 sourcesteps=10
+    // method=gear maxord=2` to both adapters — the subckt converges
+    // where the prior `.op` skipped.  Power rails wire implicitly to
+    // vcc_rail / 0 (the canvas doesn't draw op-amp power pins).
+    // Real slew rate (~0.5 V/µs), GBW (~1 MHz), and rail headroom
+    // come for free vs the prior behavioural B-source clamp.
     return {
-      cards: [
-        `R_${comp.id}_inp ${inp} 0 10Meg`,
-        `R_${comp.id}_inn ${inn} 0 10Meg`,
-        `B_${comp.id} ${out} 0 V = max(${vLo}, min(${vHi}, ${A}*(V(${inp})-V(${inn}))))`,
-        `R_${comp.id}_out ${out} 0 1Meg`,
-      ],
-      modelsUsed: new Set(),
+      cards: [`X_${comp.id} ${inp} ${inn} vcc_rail 0 ${out} LM358`],
+      modelsUsed: new Set([LM358_SUBCKT]),
     };
   },
   'opamp-lm741': (comp, netLookup, ctx) => {

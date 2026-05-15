@@ -54,7 +54,23 @@ export class NgSpiceWorkerAdapter implements SolverPort {
   async init(): Promise<void> {
     if (this.initialised) return;
     if (!this.initPromise) {
-      this.initPromise = this.client.init().then(() => {
+      this.initPromise = this.client.init().then(async () => {
+        // Convergence helpers — relaxed gmin lets op-amp + diode
+        // circuits bias correctly without each user netlist needing
+        // its own `.option`.  Method=gear maxord=2 stabilises stiff
+        // transient solves involving B-source clamps and reactive
+        // networks.  Mirrors NgSpiceNodeAdapter.initialiseNgspice so
+        // production and tests run with identical solver tolerances.
+        try {
+          await this.client.command('set noaskquit');
+          await this.client.command(
+            'option gmin=1e-10 gminsteps=20 sourcesteps=10 method=gear maxord=2',
+          );
+        } catch {
+          // Ignore: the build always supports these options.  If the
+          // command path is dead, the actual solve will fail loudly
+          // later anyway.
+        }
         this.initialised = true;
       });
     }
@@ -63,6 +79,13 @@ export class NgSpiceWorkerAdapter implements SolverPort {
 
   async loadCircuit(netlist: string): Promise<void> {
     await this.init();
+    // Drop the previous circuit deck so leftover state doesn't leak
+    // into the new solve.  Mirrors the Node adapter's loadCircuit.
+    try {
+      await this.client.command('remcirc');
+    } catch {
+      // No previous circuit — ignore.
+    }
     await this.client.loadNetlist(netlist);
   }
 

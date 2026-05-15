@@ -190,7 +190,7 @@ export class NgSpiceNodeAdapter implements SolverPort {
     // user netlist.  Method=gear maxord=2 stabilises stiff transient
     // solves involving B-source clamps and reactive networks.
     this.api.command('set noaskquit');
-    this.api.command('option gmin=1e-10 gminsteps=20 method=gear maxord=2');
+    this.api.command('option gmin=1e-10 gminsteps=20 sourcesteps=10 method=gear maxord=2');
   }
 
   async loadCircuit(netlist: string): Promise<void> {

@@ -21,11 +21,7 @@ const ARCHETYPES = [
   'an-voltage-divider',
   'an-half-wave-rectifier',
   'an-bjt-switch',
-  // 'an-opamp-follower' — skipped after the F2 migration to NgSpiceNodeAdapter:
-  // the LM358 behavioural B-source clamp fails `.op` convergence on the new
-  // engine (length=0 vectors despite a valid plot).  The follower IS solved
-  // correctly under `.tran` (see phase-2-lm358 plan); convergence fix for
-  // .op is a separate ticket — Phase 1c E1 (convergence helpers).
+  'an-opamp-follower',
 ];
 
 describe('analogExamples — representative ngspice solves', () => {

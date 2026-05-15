@@ -14,6 +14,8 @@
  * the new behaviour automatically.
  */
 import type { BuildNetlistInput, AnalysisMode } from '../simulation/spice/types';
+import { buildInputFromStore } from '../simulation/spice/storeAdapter';
+import type { BoardKind } from '../types/board';
 import type { ExampleProject } from '../data/examples';
 
 /**
@@ -48,19 +50,28 @@ export function isBoardComponentType(componentType: string): boolean {
 
 /**
  * Convert an `ExampleProject` into a `BuildNetlistInput` ready for
- * `NetlistBuilder.buildNetlist`.  Boards are filtered out of the
- * component list (they don't get SPICE cards — only V-sources via
- * pin states), and component types lose their brand prefix.
+ * `NetlistBuilder.buildNetlist`.
  *
- * Boards[] is empty by default — for smoke tests we don't need to
- * stamp MCU pin voltages.  Callers that DO need them (e.g. live
- * tests of multi-board setups) pass `opts.boards` explicitly.
+ * Delegates to the production `buildInputFromStore` helper so the
+ * analysis-picking logic (`.op` vs `.tran` based on signal-generator /
+ * MCU-driven reactive networks) is shared with the real load path.
+ * That means a smoke test sees the SAME analysis kind a user would
+ * trigger by opening the example in the editor.
+ *
+ * Boards default to empty — for analog-only examples that's fine.
+ * Caller can override (e.g. testing a multi-board mixed example).
  */
 export function exampleToBuildNetlistInput(
   example: ExampleProject,
   opts: {
+    /** Override the analysis-picking result (e.g. force `.op` for a smoke check). */
     analysis?: AnalysisMode;
-    boards?: BuildNetlistInput['boards'];
+    /** Inject boards with MCU pin states (otherwise empty — see `pinStates: {}`). */
+    boards?: Array<{
+      id: string;
+      boardKind: BoardKind;
+      pinStates: Record<string, never>;
+    }>;
   } = {},
 ): BuildNetlistInput {
   const components = example.components
@@ -75,12 +86,16 @@ export function exampleToBuildNetlistInput(
     id: w.id,
     start: { componentId: w.start.componentId, pinName: w.start.pinName },
     end: { componentId: w.end.componentId, pinName: w.end.pinName },
+    color: '#666',
+    waypoints: [],
   }));
 
-  return {
+  const input = buildInputFromStore({
     components,
     wires,
     boards: opts.boards ?? [],
-    analysis: opts.analysis ?? { kind: 'op' },
-  };
+  });
+  // Caller may override the auto-picked analysis (e.g. force `.op`).
+  if (opts.analysis) input.analysis = opts.analysis;
+  return input;
 }

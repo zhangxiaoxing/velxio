@@ -132,10 +132,11 @@ describe('analogExamples — netlist generation', () => {
         analysis: { kind: 'op' },
       });
       for (const c of ex.components) {
-        // Cards begin with an element prefix (R/C/L/D/Q/M/E/S/V/B) followed by
+        // Cards begin with an element prefix (R/C/L/D/Q/M/E/S/V/B/X) followed by
         // "_<id>" somewhere. The voltmeter e.g. emits "R_vm_vmR ...", so the
-        // id may be followed by any non-word-boundary character.
-        const re = new RegExp(`^[RCLDQMESVB]_${c.id}(?:_|\\b)`, 'm');
+        // id may be followed by any non-word-boundary character. X is the
+        // SPICE subcircuit instance prefix (Phase 1d #9 LM358 macro-model).
+        const re = new RegExp(`^[RCLDQMESVBX]_${c.id}(?:_|\\b)`, 'm');
         expect(netlist, `${ex.id} missing card for ${c.id} (${c.type})`).toMatch(re);
       }
     }
