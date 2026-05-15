@@ -145,8 +145,11 @@ function pinNameToArduinoPin(pinName: string, boardKind: BoardKind): number {
 /**
  * Collect MCU output pin states from PinManager for pins that participate
  * in the circuit (i.e., are referenced by wires).
+ *
+ * Exported so the Phase 1c WASM-driven connector can reuse the same logic
+ * without copying the per-board pin-number mapping.
  */
-function collectPinStates(
+export function collectPinStates(
   boardId: string,
   boardKind: BoardKind,
   wires: Array<{

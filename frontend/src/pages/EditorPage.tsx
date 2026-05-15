@@ -6,6 +6,10 @@ import React, { useRef, useState, useCallback, useEffect, lazy, Suspense } from 
 import { useTranslation } from 'react-i18next';
 import { wireElectricalSolver } from '../simulation/spice/subscribeToStore';
 import { connectLegacySolverToMixedMode } from '../simulation/spice/connectLegacySolverToMixedMode';
+import {
+  connectMixedModeSchedulerToStore,
+  isMixedModeEnabled,
+} from '../simulation/spice/connectMixedModeSchedulerToStore';
 import { useSEO } from '../utils/useSEO';
 import { CodeEditor } from '../components/editor/CodeEditor';
 import { EditorToolbar } from '../components/editor/EditorToolbar';
@@ -93,9 +97,16 @@ export const EditorPage: React.FC = () => {
   useEffect(() => {
     const unsub = wireElectricalSolver();
     const unsubMixedMode = connectLegacySolverToMixedMode();
+    // Phase 1c step 1 — feature-flagged WASM-driven path. Both connectors
+    // publish into the MixedModeScheduler cache; last write wins. Toggle
+    // via `?mixedmode=on` URL param or `localStorage.velxio.mixedmode='on'`.
+    const unsubWasm = isMixedModeEnabled()
+      ? connectMixedModeSchedulerToStore()
+      : () => {};
     return () => {
       unsub();
       unsubMixedMode();
+      unsubWasm();
     };
   }, []);
 
