@@ -437,9 +437,21 @@ export class RP2040Simulator {
     this.wireI2C(0);
     this.wireI2C(1);
 
-    // ── Wire SPI0 and SPI1 — default loopback ────────────────────────
-    this.rp2040.spi[0].onTransmit = (value: number) => {
-      this.rp2040!.spi[0].completeTransmit(value); // loopback
+    // ── Wire SPI0 and SPI1 ────────────────────────────────────────────
+    // SPI0 must check for a registered .spi adapter on every byte. If a
+    // part on the canvas (ILI9341, custom chip, …) accessed simulator.spi
+    // BEFORE this initMCU runs, the adapter is already staged but
+    // _adapter.onByte points at the part's handler — we have to route
+    // the byte through it. Without this, SPI parts see nothing and the
+    // canvas stays black (real regression — Pico Doom shipped with this
+    // bug for months because the same wiring in initMicroPython was
+    // adapter-aware but this Arduino path wasn't).
+    this.rp2040.spi[0].onTransmit = (v: number) => {
+      if (this._spiAdapter && this._spiAdapter.onByte) {
+        this._spiAdapter.onByte(v);
+      } else {
+        this.rp2040!.spi[0].completeTransmit(v);
+      }
     };
     this.rp2040.spi[1].onTransmit = (value: number) => {
       this.rp2040!.spi[1].completeTransmit(value); // loopback
