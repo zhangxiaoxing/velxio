@@ -71,18 +71,25 @@ describe('pico-doom-raycaster example', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('SPI wires connect the Pico GP18/GP19/GP17/GP20/GP21/GP22 to the ILI9341 pins the sketch expects', () => {
+  it('SPI + control + power wires connect Pico → ILI9341 with the pinout the sketch + hardware expect', () => {
     const e = findExample()!;
-    // (pico-pin, ili9341-pin) pairs the sketch hard-codes. If any of these
-    // get re-routed in the example, the sketch's #define block has to
-    // match — fail loud here so the mismatch can't slip into prod.
+    // (pico-pin, ili9341-pin) pairs. Everything except GP16↔MISO comes
+    // from the sketch's #define block. GP16↔MISO is hardware SPI0's
+    // MISO line — the 3-arg Adafruit_ILI9341(CS, DC, RST) constructor
+    // selects hardware SPI0, so this pin is fixed even though the
+    // driver never reads back. If any pair gets re-routed in the
+    // example, the sketch + this list have to move together — fail
+    // loud here so the mismatch can't slip into prod.
     const expected: Array<[string, string]> = [
-      ['GP18', 'SCK'],
-      ['GP19', 'MOSI'],
-      ['GP17', 'CS'],
-      ['GP20', 'D/C'],
-      ['GP21', 'RST'],
-      ['GP22', 'LED'],
+      ['3V3',   'VCC'],
+      ['GND.5', 'GND'],
+      ['GP18',  'SCK'],
+      ['GP19',  'MOSI'],
+      ['GP16',  'MISO'],
+      ['GP17',  'CS'],
+      ['GP20',  'D/C'],
+      ['GP21',  'RST'],
+      ['GP22',  'LED'],
     ];
     for (const [picoPin, tftPin] of expected) {
       const match = e.wires.find(

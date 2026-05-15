@@ -956,9 +956,17 @@ void loop() {
       { type: 'wokwi-pushbutton', id: 'btn-right', x: 310, y: 470, properties: { color: 'green', label: 'RIGHT' } },
     ],
     wires: [
-      // SPI bus + control lines to the ILI9341
+      // Power
+      { id: 'w-tft-vcc',  start: { componentId: 'raspberry-pi-pico', pinName: '3V3'   }, end: { componentId: 'tft1', pinName: 'VCC'  }, color: '#ff0000' },
+      { id: 'w-tft-gnd',  start: { componentId: 'raspberry-pi-pico', pinName: 'GND.5' }, end: { componentId: 'tft1', pinName: 'GND'  }, color: '#000000' },
+      // SPI bus + control lines to the ILI9341. MISO is GP16 — the
+      // sketch's 3-arg Adafruit_ILI9341(CS, DC, RST) constructor uses
+      // hardware SPI0, whose MISO pin is GP16. The driver writes only
+      // (no register reads), so MISO is electrically idle, but the
+      // wire is included so the circuit is didactically complete.
       { id: 'w-tft-sck',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP18' }, end: { componentId: 'tft1', pinName: 'SCK'  }, color: '#ff8800' },
       { id: 'w-tft-mosi', start: { componentId: 'raspberry-pi-pico', pinName: 'GP19' }, end: { componentId: 'tft1', pinName: 'MOSI' }, color: '#ff8800' },
+      { id: 'w-tft-miso', start: { componentId: 'raspberry-pi-pico', pinName: 'GP16' }, end: { componentId: 'tft1', pinName: 'MISO' }, color: '#ffaa44' },
       { id: 'w-tft-cs',   start: { componentId: 'raspberry-pi-pico', pinName: 'GP17' }, end: { componentId: 'tft1', pinName: 'CS'   }, color: '#00aaff' },
       { id: 'w-tft-dc',   start: { componentId: 'raspberry-pi-pico', pinName: 'GP20' }, end: { componentId: 'tft1', pinName: 'D/C'  }, color: '#00cc00' },
       { id: 'w-tft-rst',  start: { componentId: 'raspberry-pi-pico', pinName: 'GP21' }, end: { componentId: 'tft1', pinName: 'RST'  }, color: '#cc0000' },
