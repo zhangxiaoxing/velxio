@@ -133,16 +133,28 @@ class MixedModeSchedulerImpl implements SpiceVoltageSource {
     return this.lastResult;
   }
 
+  private extraVectors: readonly string[] = [];
+
+  /**
+   * Let an orchestrator (CircuitSimulationService) ask the solver
+   * for vectors beyond the pin-net set — branch currents, internal
+   * nets, etc.  Replaces any previous set; pass [] to clear.
+   */
+  setExtraVectorsOfInterest(vectors: readonly string[]): void {
+    this.extraVectors = vectors;
+  }
+
   private async solveAndPublish(analysis: SolveAnalysis): Promise<void> {
     const solver = this.solver;
     if (!solver) return;
 
-    // Build vectorsOfInterest from pinNetMap — every distinct non-ground
-    // net needs a v(<net>) read.
+    // Build vectorsOfInterest from pinNetMap (every non-ground net)
+    // plus whatever the orchestrator added.
     const vectorsOfInterest = new Set<string>();
     for (const net of this.pinNetMap.values()) {
       if (net !== '0') vectorsOfInterest.add(`v(${net})`);
     }
+    for (const v of this.extraVectors) vectorsOfInterest.add(v);
 
     const result = await solver.solve(analysis, {
       vectorsOfInterest: Array.from(vectorsOfInterest),

@@ -34,6 +34,20 @@ export interface BuildNetlistResult {
   netlist: string;
   /** "boardId:pinName" → SPICE net name, from the same UF used to build the netlist. */
   pinNetMap: Map<string, string>;
+  /**
+   * Every SPICE net name in the circuit except canonical "0" (ground).
+   * Includes `vcc_rail` plus all auto-named nets (n0, n1, ...).  Used
+   * by CircuitSimulationService to ask the solver for every node
+   * voltage in one shot (vectorsOfInterest).
+   */
+  nets: string[];
+  /**
+   * Every voltage source name in the circuit (without the leading
+   * `V` prefix is NOT how ngspice names them — they include the V).
+   * Examples: `V_VCC_RAIL`, `V_uno_9`, `V_led1_sense`. Used to
+   * request branch currents (`i(v_<name>)`).
+   */
+  voltageSources: string[];
 }
 
 export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
@@ -180,7 +194,25 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     }
   }
 
-  return { netlist: lines.join('\n'), pinNetMap };
+  // ── 10. Enumerate every net + voltage source for the solve options ───────
+  // Distinct, non-ground nets — every node the solver should report.
+  const nets = Array.from(new Set(netNames.values())).filter((n) => n !== '0');
+  // Voltage sources are any card starting with `V` (uppercase) followed
+  // by an underscore or digit.  ngspice's case-insensitive match means
+  // both `Vname` and `vname` count.  We emit only uppercase prefixes
+  // from componentToSpice + NetlistBuilder, so this regex is safe.
+  const voltageSources: string[] = [];
+  for (const card of cards) {
+    const m = card.match(/^([Vv][_\w]*)\s/);
+    if (m) voltageSources.push(m[1]);
+  }
+
+  return {
+    netlist: lines.join('\n'),
+    pinNetMap,
+    nets,
+    voltageSources,
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
