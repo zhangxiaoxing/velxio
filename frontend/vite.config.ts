@@ -83,14 +83,6 @@ export default defineConfig(({ command }) => ({
     },
     chunkSizeWarningLimit: 8000,
   },
-  test: {
-    globals: true,
-    environment: 'node',
-    include: ['src/__tests__/**/*.test.ts'],
-    coverage: {
-      provider: 'v8',
-      include: ['src/simulation/**/*.ts'],
-      reporter: ['text', 'html'],
-    },
-  },
+  // Vitest config lives in `vitest.config.ts` (split out so CI can
+  // reference it directly and so vite build doesn't pay test deps).
 }))

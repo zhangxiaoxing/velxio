@@ -65,6 +65,15 @@ class PartRegistry {
   get(metadataId: string): PartSimulationLogic | undefined {
     return this.parts.get(metadataId);
   }
+
+  /**
+   * Return every metadataId that has runtime simulation logic
+   * registered.  Used by the part-simulators-coverage test
+   * (Phase 1d-tests E) to enumerate without duplicating the list.
+   */
+  listRegisteredParts(): string[] {
+    return Array.from(this.parts.keys()).sort();
+  }
 }
 
 export const PartSimulationRegistry = new PartRegistry();
