@@ -1,5 +1,6 @@
 import { AVRSimulator } from '../AVRSimulator';
 import { RP2040Simulator } from '../RP2040Simulator';
+import type { PinResolver } from '../PinResolver';
 
 /** Any simulator that components can interact with (AVR, RP2040, or ESP32 bridge shim). */
 export type AnySimulator =
@@ -31,10 +32,18 @@ export interface PartSimulationLogic {
    * Called when the simulation starts to attach events or setup periodic tasks.
    * Useful for input components (buttons, potentiometers) or complex components (servos).
    *
+   * The 5th parameter `getPinResolver` is the recommended entry point for
+   * new code — it returns a PinResolver that hides whether the underlying
+   * source is the digital PinManager (Phase 0) or a SPICE-resolved net
+   * voltage with threshold conversion (Phase 1+). Existing handlers can
+   * keep using `getArduinoPinHelper` + `pinManager.onPinChange` directly;
+   * the migration happens incrementally per-component in Phase 5.
+   *
    * @param element The DOM element of the wokwi component
    * @param avrSimulator The running simulator instance
-   * @param getArduinoPinHelper Function to find what Arduino pin is connected to a specific component pin
-   * @param componentId The unique ID of this component instance (used by SensorUpdateRegistry)
+   * @param getArduinoPinHelper Legacy: returns the Arduino pin number controlling a component pin
+   * @param componentId The unique ID of this component instance
+   * @param getPinResolver Preferred: returns a PinResolver for a component pin
    * @returns A cleanup function to remove event listeners when simulation stops
    */
   attachEvents?: (
@@ -42,6 +51,7 @@ export interface PartSimulationLogic {
     simulator: AnySimulator,
     getArduinoPinHelper: (componentPinName: string) => number | null,
     componentId: string,
+    getPinResolver?: (componentPinName: string) => PinResolver | null,
   ) => () => void;
 }
 

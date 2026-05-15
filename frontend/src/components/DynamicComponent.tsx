@@ -17,6 +17,8 @@ import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useElectricalStore } from '../store/useElectricalStore';
 import { PartSimulationRegistry } from '../simulation/parts';
 import { isBoardComponent, boardPinToNumber } from '../utils/boardPinMapping';
+import { createDefaultPinResolver, type PinResolver } from '../simulation/PinResolver';
+import { BOARD_PIN_GROUPS } from '../simulation/spice/boardPinGroups';
 
 // Side-effect imports: register every web component we'll create at runtime.
 // `@wokwi/elements` covers the upstream catalog; `../velxio-elements` adds
@@ -359,7 +361,58 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
         return trace(id, componentPinName, 0);
       };
 
-      cleanupSimulationEvents = logic.attachEvents(el, stubSimulator, getArduinoPin, id);
+      // PinResolver factory — Phase 0 of the mixed-mode simulator project
+      // (see project/sim-mixedmode/ in the velxio-prod repo). For now it
+      // wraps getArduinoPin + pinManager.onPinChange — zero behavioral
+      // change vs the legacy path. Phase 1+ will swap in a SPICE-resolved
+      // implementation that watches node voltages and threshold-converts
+      // to logic states.
+      const simState = useSimulatorStore.getState();
+      const ownerBoard =
+        simState.boards.find((b) => b.id === simState.activeBoardId) ?? null;
+      const ownerBoardVcc =
+        (ownerBoard && BOARD_PIN_GROUPS[ownerBoard.boardKind as keyof typeof BOARD_PIN_GROUPS]?.vcc) ?? 5;
+      const getPinResolver = (componentPinName: string): PinResolver | null => {
+        const state = useSimulatorStore.getState();
+        const pinManager = (stubSimulator as {
+          pinManager?: {
+            onPinChange?: (pin: number, cb: (pin: number, state: boolean) => void) => () => void;
+            getPinState?: (pin: number) => boolean | null;
+          };
+        }).pinManager;
+        return createDefaultPinResolver(
+          id,
+          componentPinName,
+          {
+            components: state.components,
+            boards: state.boards,
+            wires: state.wires,
+            ownerBoard,
+            ownerBoardVcc,
+            subscribeArduinoPin: (pin, cb) => {
+              if (!pinManager?.onPinChange) return () => {};
+              return pinManager.onPinChange(pin, cb);
+            },
+            readArduinoPin: (pin) => {
+              if (!pinManager?.getPinState) return null;
+              try {
+                return pinManager.getPinState(pin);
+              } catch {
+                return null;
+              }
+            },
+          },
+          getArduinoPin,
+        );
+      };
+
+      cleanupSimulationEvents = logic.attachEvents(
+        el,
+        stubSimulator,
+        getArduinoPin,
+        id,
+        getPinResolver,
+      );
     }
 
     return () => {
