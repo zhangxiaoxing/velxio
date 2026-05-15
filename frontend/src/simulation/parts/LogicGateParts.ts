@@ -15,33 +15,57 @@ import type { PartSimulationLogic } from './PartSimulationRegistry';
 
 function twoInputGate(compute: (a: boolean, b: boolean) => boolean): PartSimulationLogic {
   return {
-    attachEvents: (element, simulator, getPin) => {
-      const pinA = getPin('A');
-      const pinB = getPin('B');
+    attachEvents: (element, simulator, getPin, _componentId, getPinResolver) => {
       const pinY = getPin('Y');
+      if (pinY === null) return () => {};
 
-      if (pinA === null || pinB === null || pinY === null) return () => {};
-
+      // Phase 5 migration: prefer the PinResolver path so gate inputs
+      // downstream of an active device (e.g. a sensor through a
+      // transistor) read via SPICE thresholds + the board logic family
+      // (Phase 3) instead of relying on direct pinManager state.
+      // The output side keeps using setPinState — digital propagation
+      // between gates is still pinManager's job.
+      const useResolver = typeof getPinResolver === 'function';
       let stateA = false;
       let stateB = false;
-
       const update = () => simulator.setPinState(pinY, compute(stateA, stateB));
 
-      const unsubA = simulator.pinManager.onPinChange(pinA, (_: number, s: boolean) => {
-        stateA = s;
-        update();
-      });
-      const unsubB = simulator.pinManager.onPinChange(pinB, (_: number, s: boolean) => {
-        stateB = s;
-        update();
-      });
+      const unsubs: Array<() => void> = [];
+      if (useResolver) {
+        const resA = getPinResolver!('A');
+        const resB = getPinResolver!('B');
+        if (!resA || !resB) return () => {};
+        stateA = resA.getCurrentState() === 'HIGH';
+        stateB = resB.getCurrentState() === 'HIGH';
+        unsubs.push(
+          resA.onChange((state) => {
+            stateA = state === 'HIGH';
+            update();
+          }),
+          resB.onChange((state) => {
+            stateB = state === 'HIGH';
+            update();
+          }),
+        );
+      } else {
+        const pinA = getPin('A');
+        const pinB = getPin('B');
+        if (pinA === null || pinB === null) return () => {};
+        unsubs.push(
+          simulator.pinManager.onPinChange(pinA, (_: number, s: boolean) => {
+            stateA = s;
+            update();
+          }),
+          simulator.pinManager.onPinChange(pinB, (_: number, s: boolean) => {
+            stateB = s;
+            update();
+          }),
+        );
+      }
 
-      update(); // Drive Y immediately with initial LOW state
+      update(); // Drive Y immediately with initial state
 
-      return () => {
-        unsubA();
-        unsubB();
-      };
+      return () => unsubs.forEach((u) => u());
     },
   };
 }
@@ -89,27 +113,43 @@ function nInputGate(
   compute: (inputs: boolean[]) => boolean,
 ): PartSimulationLogic {
   return {
-    attachEvents: (element, simulator, getPin) => {
-      const inputPins = inputNames.map((n) => getPin(n));
+    attachEvents: (element, simulator, getPin, _componentId, getPinResolver) => {
       const pinY = getPin('Y');
+      if (pinY === null) return () => {};
 
-      if (inputPins.some((p) => p === null) || pinY === null) return () => {};
-
+      const useResolver = typeof getPinResolver === 'function';
       const states = inputNames.map(() => false);
       const update = () => simulator.setPinState(pinY, compute(states));
+      const unsubs: Array<() => void> = [];
 
-      const unsubs = inputPins.map((p, i) =>
-        simulator.pinManager.onPinChange(p!, (_: number, s: boolean) => {
-          states[i] = s;
-          update();
-        }),
-      );
+      if (useResolver) {
+        const resolvers = inputNames.map((n) => getPinResolver!(n));
+        if (resolvers.some((r) => r === null)) return () => {};
+        resolvers.forEach((r, i) => {
+          states[i] = r!.getCurrentState() === 'HIGH';
+          unsubs.push(
+            r!.onChange((state) => {
+              states[i] = state === 'HIGH';
+              update();
+            }),
+          );
+        });
+      } else {
+        const inputPins = inputNames.map((n) => getPin(n));
+        if (inputPins.some((p) => p === null)) return () => {};
+        inputPins.forEach((p, i) => {
+          unsubs.push(
+            simulator.pinManager.onPinChange(p!, (_: number, s: boolean) => {
+              states[i] = s;
+              update();
+            }),
+          );
+        });
+      }
 
       update();
 
-      return () => {
-        unsubs.forEach((u) => u());
-      };
+      return () => unsubs.forEach((u) => u());
     },
   };
 }
@@ -132,15 +172,12 @@ function edgeTriggeredFF(
   sample: (state: boolean, inputs: boolean[]) => boolean,
 ): PartSimulationLogic {
   return {
-    attachEvents: (element, simulator, getPin) => {
-      const clkPin = getPin('CLK');
+    attachEvents: (element, simulator, getPin, _componentId, getPinResolver) => {
       const qPin = getPin('Q');
       const qbarPin = getPin('Qbar');
-      const dataPinIds = dataPins.map((n) => getPin(n));
+      if (qPin === null || qbarPin === null) return () => {};
 
-      if (clkPin === null || qPin === null || qbarPin === null) return () => {};
-      if (dataPinIds.some((p) => p === null)) return () => {};
-
+      const useResolver = typeof getPinResolver === 'function';
       let prevClk = false;
       let q = initial;
       const dataStates = dataPins.map(() => false);
@@ -150,27 +187,58 @@ function edgeTriggeredFF(
         simulator.setPinState(qbarPin, !q);
       };
 
-      const unsubClk = simulator.pinManager.onPinChange(clkPin, (_: number, s: boolean) => {
-        if (!prevClk && s) {
-          // Rising edge
-          q = sample(q, dataStates);
-          emit();
-        }
-        prevClk = s;
-      });
+      const unsubs: Array<() => void> = [];
 
-      const unsubData = dataPinIds.map((p, i) =>
-        simulator.pinManager.onPinChange(p!, (_: number, s: boolean) => {
-          dataStates[i] = s;
-        }),
-      );
+      if (useResolver) {
+        const resClk = getPinResolver!('CLK');
+        const resData = dataPins.map((n) => getPinResolver!(n));
+        if (!resClk || resData.some((r) => r === null)) return () => {};
+        prevClk = resClk.getCurrentState() === 'HIGH';
+        resData.forEach((r, i) => {
+          dataStates[i] = r!.getCurrentState() === 'HIGH';
+        });
+        unsubs.push(
+          resClk.onChange((state) => {
+            const s = state === 'HIGH';
+            if (!prevClk && s) {
+              q = sample(q, dataStates);
+              emit();
+            }
+            prevClk = s;
+          }),
+        );
+        resData.forEach((r, i) => {
+          unsubs.push(
+            r!.onChange((state) => {
+              dataStates[i] = state === 'HIGH';
+            }),
+          );
+        });
+      } else {
+        const clkPin = getPin('CLK');
+        const dataPinIds = dataPins.map((n) => getPin(n));
+        if (clkPin === null || dataPinIds.some((p) => p === null)) return () => {};
+        unsubs.push(
+          simulator.pinManager.onPinChange(clkPin, (_: number, s: boolean) => {
+            if (!prevClk && s) {
+              q = sample(q, dataStates);
+              emit();
+            }
+            prevClk = s;
+          }),
+        );
+        dataPinIds.forEach((p, i) => {
+          unsubs.push(
+            simulator.pinManager.onPinChange(p!, (_: number, s: boolean) => {
+              dataStates[i] = s;
+            }),
+          );
+        });
+      }
 
       emit(); // Drive initial Q / Qbar
 
-      return () => {
-        unsubClk();
-        unsubData.forEach((u) => u());
-      };
+      return () => unsubs.forEach((u) => u());
     },
   };
 }
@@ -213,11 +281,21 @@ PartSimulationRegistry.register('logic-gate-nor-4', nInputGate(['A', 'B', 'C', '
 
 // ─── NOT (inverter) ───────────────────────────────────────────────────────────
 PartSimulationRegistry.register('logic-gate-not', {
-  attachEvents: (element, simulator, getPin) => {
-    const pinA = getPin('A');
+  attachEvents: (element, simulator, getPin, _componentId, getPinResolver) => {
     const pinY = getPin('Y');
+    if (pinY === null) return () => {};
 
-    if (pinA === null || pinY === null) return () => {};
+    if (typeof getPinResolver === 'function') {
+      const resA = getPinResolver('A');
+      if (!resA) return () => {};
+      simulator.setPinState(pinY, resA.getCurrentState() !== 'HIGH');
+      return resA.onChange((state) => {
+        simulator.setPinState(pinY, state !== 'HIGH');
+      });
+    }
+
+    const pinA = getPin('A');
+    if (pinA === null) return () => {};
 
     const unsub = simulator.pinManager.onPinChange(pinA, (_: number, s: boolean) => {
       simulator.setPinState(pinY, !s);
