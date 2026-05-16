@@ -1,0 +1,37 @@
+{
+  "_comment": "Source of truth for QEMU boot files. Adding a new board kind means appending an entry under image_sets; the BootImageProvider picks it up via load_manifest() with no Python edits. SHA256s are verified after download; mismatches raise IntegrityError and the cache slot is not populated. See docs/BOOT_IMAGES.md for the architecture.",
+  "version": 1,
+  "image_sets": {
+    "raspberry-pi-3": {
+      "description": "Raspberry Pi 3 Model B boot files — kernel, device tree, and Raspberry Pi OS Trixie (armhf) SD image. Targets the QEMU 'raspi3b' machine type. The SD image ships compressed (zstd -19) to cut the licence-endpoint download from ~5.3 GiB to ~1.4 GiB; the provider decompresses on the host into the named volume cache.",
+      "images": [
+        {
+          "name": "kernel8.img",
+          "asset_id": "kernel8-pi3",
+          "sha256": "495bf3ec05ad1de29cb884ec3d5e89bfc824740f537d40cbe6be59ee1cdc6ef9",
+          "size_bytes": 9695883,
+          "version": "2026-04-21"
+        },
+        {
+          "name": "bcm2710-rpi-3-b.dtb",
+          "asset_id": "dtb-bcm2710-rpi-3-b",
+          "sha256": "496fa7723583a0374b5b2e2be997301368d70b411a47bc74a394291c3636ad13",
+          "size_bytes": 34687,
+          "version": "2026-04-21"
+        },
+        {
+          "name": "raspios-trixie-armhf.img",
+          "asset_id": "raspios-trixie-armhf-zst",
+          "sha256": "eb94f66c11fac1212d6cceda54e44736f68099dd5dea33825f1f3a9312b776db",
+          "size_bytes": 5729419264,
+          "version": "2026-04-21",
+          "compressed": {
+            "encoding": "zstd",
+            "sha256": "390ea79bcd3e1165d8d17548d8db26103a10097a8047a4b1bdb314443f14f6b7",
+            "size_bytes": 1488002803
+          }
+        }
+      ]
+    }
+  }
+}

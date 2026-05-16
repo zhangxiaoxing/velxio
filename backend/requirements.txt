@@ -15,3 +15,7 @@ esptool>=4.7.0
 # subprocess so I2C events get a synchronous response — see
 # docs/wiki/custom-chips-esp32-backend-runtime.md).
 wasmtime>=20.0
+# zstd decompression for the boot_images provider — the Raspberry Pi 3
+# SD image ships as a .zst on the velxio.dev licence endpoint to save
+# ~75% of network transfer.
+zstandard>=0.22.0

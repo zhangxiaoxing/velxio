@@ -141,7 +141,18 @@ RUN rm -f package-lock.json \
 # ---- Stage 2: Final Production Image ----
 FROM python:3.12-slim
 
-# Install system dependencies, nginx, and QEMU .so runtime libraries
+# Install system dependencies, nginx, and QEMU runtime.
+#
+# qemu-system-arm + qemu-utils provide qemu-system-aarch64 and qemu-img,
+# both invoked by app/services/qemu_manager.py for Raspberry Pi 3
+# simulation. They were missing for the entire 2024-2026 stretch when
+# Pi 3 simulation was advertised but broken — see docs/BOOT_IMAGES.md.
+# ~200 MB added to the image; trade-off is "Pi 3 actually works".
+#
+# Other libs (libglib2.0-0, libgcrypt20, libslirp0, libpixman-1-0,
+# libfdt1) used to be needed only as runtime deps for libqemu-xtensa.so;
+# they're still needed but now also pulled in transitively by
+# qemu-system-arm.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -156,6 +167,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libusb-1.0-0 \
     git \
     ccache \
+    qemu-system-arm \
+    qemu-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir packaging

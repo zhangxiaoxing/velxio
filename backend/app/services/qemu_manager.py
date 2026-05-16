@@ -9,6 +9,15 @@ Each Pi board instance gets:
   - ttyAMA1 (serial1) → TCP socket on a dynamic port → GPIO shim protocol
   - A fresh qcow2 overlay over the base SD image (copy-on-write, discarded on stop)
 
+Boot files (kernel8.img, device tree, Raspberry Pi OS SD image) are NOT
+shipped in the repo or baked into the Docker image. They're resolved at
+runtime via :class:`app.services.boot_images.BootImageProvider`, which
+downloads + SHA256-verifies + decompresses them on first use and caches
+them under ``/var/cache/velxio/boot-images/raspberry-pi-3/``. The
+lifespan hook at the bottom of this module pre-warms the cache at
+process startup so a first-time user request doesn't pay the
+download latency.
+
 GPIO shim protocol (ttyAMA1)
 ----------------------------
   Pi → backend :  "GPIO <bcm_pin> <0|1>\\n"
@@ -21,15 +30,26 @@ import os
 import socket
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Callable, Awaitable
+
+from app.core.hooks import register_lifespan_startup
+from app.services.boot_images import (
+    BootImageError,
+    BootImageProvider,
+    get_default_provider,
+)
 
 logger = logging.getLogger(__name__)
 
-# ── Paths ────────────────────────────────────────────────────────────────────
-IMG_DIR     = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'img')
-KERNEL_PATH = os.path.join(IMG_DIR, 'kernel8.img')
-DTB_PATH    = os.path.join(IMG_DIR, 'bcm271~1.dtb')
-SD_BASE     = os.path.join(IMG_DIR, '2025-12-04-raspios-trixie-armhf.img')
+# Image-set id (matches a key in `boot_images/manifest.json`).
+PI3_IMAGE_SET = 'raspberry-pi-3'
+
+# Filenames the provider materialises (must match `name` fields in the
+# manifest entry for PI3_IMAGE_SET).
+PI3_KERNEL_NAME = 'kernel8.img'
+PI3_DTB_NAME    = 'bcm2710-rpi-3-b.dtb'
+PI3_SD_NAME     = 'raspios-trixie-armhf.img'
 
 
 def _find_free_port() -> int:
@@ -66,8 +86,13 @@ class PiInstance:
 
 
 class QemuManager:
-    def __init__(self):
+    def __init__(self, provider: BootImageProvider | None = None):
         self._instances: dict[str, PiInstance] = {}
+        # The provider is resolved lazily on first boot so importing
+        # this module never triggers a download or even a manifest
+        # parse. Injected via the constructor for tests; production
+        # uses `get_default_provider()` on first use.
+        self._provider = provider
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -103,10 +128,21 @@ class QemuManager:
     # ── Boot sequence ─────────────────────────────────────────────────────────
 
     async def _boot(self, inst: PiInstance) -> None:
-        if not self._check_images():
-            await inst.emit('error', {'message': 'Missing QEMU boot files (kernel8.img / SD image)'})
+        # Resolve boot files via the provider (downloads + verifies on
+        # first call; cache hit on subsequent calls thanks to the
+        # lifespan pre-warm at module load).
+        try:
+            images = await self._get_provider().get(PI3_IMAGE_SET)
+        except BootImageError as exc:
+            logger.error('[pi3] boot-image provisioning failed: %s', exc)
+            await inst.emit('error', {
+                'message': f'Raspberry Pi 3 boot files unavailable: {exc}',
+            })
             self._instances.pop(inst.client_id, None)
             return
+        kernel_path: Path = images[PI3_KERNEL_NAME]
+        dtb_path:    Path = images[PI3_DTB_NAME]
+        sd_base:     Path = images[PI3_SD_NAME]
 
         # Allocate TCP ports for the two serial channels
         inst.serial_port = _find_free_port()
@@ -119,7 +155,7 @@ class QemuManager:
         try:
             subprocess.run(
                 ['qemu-img', 'create', '-f', 'qcow2',
-                 '-b', os.path.abspath(SD_BASE), '-F', 'raw',
+                 '-b', str(sd_base), '-F', 'raw',
                  inst.overlay_path],
                 check=True, capture_output=True,
             )
@@ -137,8 +173,8 @@ class QemuManager:
         cmd = [
             'qemu-system-aarch64',
             '-M',      'raspi3b',
-            '-kernel', os.path.abspath(KERNEL_PATH),
-            '-dtb',    os.path.abspath(DTB_PATH),
+            '-kernel', str(kernel_path),
+            '-dtb',    str(dtb_path),
             '-drive',  f'file={inst.overlay_path},if=sd,format=qcow2',
             '-m',      '1G',
             '-smp',    '4',
@@ -338,11 +374,46 @@ class QemuManager:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _check_images(self) -> bool:
-        ok = os.path.exists(KERNEL_PATH) and os.path.exists(SD_BASE)
-        if not ok:
-            logger.error('Missing QEMU images in %s', IMG_DIR)
-        return ok
+    def _get_provider(self) -> BootImageProvider:
+        """Lazily resolve the boot-image provider on first boot.
+
+        Building the provider eagerly at module import would try to
+        read the env vars at import time, which races with .env loading
+        in some entrypoints. Lazy resolution keeps that hazard local
+        to the boot path.
+        """
+        if self._provider is None:
+            self._provider = get_default_provider()
+        return self._provider
+
+
+# ── Lifespan pre-warm ────────────────────────────────────────────────────────
+async def _prewarm_pi3_boot_images() -> None:
+    """Lifespan hook: download + cache the Pi 3 boot files in the
+    background at process start.
+
+    The cache check is cheap when files are already on disk (named
+    docker volume), so this is a no-op for warm containers and a one-
+    time pay-on-first-boot for fresh hosts. Failures are logged but
+    never block startup — a missing licence key or a velxio.dev outage
+    just means the first user request gets an error with a useful
+    message, instead of the whole backend refusing to start.
+    """
+    try:
+        provider = get_default_provider()
+    except Exception as exc:  # noqa: BLE001 - log + continue at startup
+        logger.warning(
+            '[pi3] cannot build boot-image provider, skipping pre-warm: %s',
+            exc,
+        )
+        return
+    # Fire-and-forget — let it complete in the background while the
+    # rest of the lifespan continues. provider.warmup() swallows its
+    # own errors, so the task never logs unhandled exceptions.
+    asyncio.create_task(provider.warmup(PI3_IMAGE_SET))
+
+
+register_lifespan_startup(_prewarm_pi3_boot_images)
 
 
 qemu_manager = QemuManager()
