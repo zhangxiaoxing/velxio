@@ -1258,6 +1258,14 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   const handleComponentMouseDown = (componentId: string, e: React.MouseEvent) => {
     if (showPropertyDialog) return;
 
+    // While the simulator is running, the canvas is read-only. Don't
+    // intercept the mousedown — let it propagate to the underlying
+    // component (wokwi-pushbutton etc.) so it can fire button-press /
+    // change events. Without this, every press on a button on the Pico
+    // Doom canvas during a run was getting eaten by the drag/selection
+    // handler.
+    if (running) return;
+
     e.stopPropagation();
     const component = components.find((c) => c.id === componentId);
     if (!component) return;
@@ -1543,7 +1551,19 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
 
   // Start panning on middle-click or right-click
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 1 || e.button === 2) {
+    // Middle / right click — always pan, regardless of context.
+    // Left click — pan only when clicking ON THE BACKGROUND (the event
+    // reaches the canvas because component mousedowns stopPropagation),
+    // and only when not wiring (wire mode uses left click to drop
+    // waypoints) or running a property dialog. Matches the diagram-editor
+    // convention used in Figma / Miro / draw.io.
+    const leftButton = e.button === 0;
+    const middleOrRight = e.button === 1 || e.button === 2;
+    const isPanGesture =
+      middleOrRight ||
+      (leftButton && !wireInProgress && !showPropertyDialog);
+
+    if (isPanGesture) {
       e.preventDefault();
       isPanningRef.current = true;
       panStartRef.current = {
@@ -2454,9 +2474,13 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           )}
 
           {/* Floating action bar for the current selection — primary delete UI
-              for touch devices (no Delete key, no right-click). Hidden while
-              creating a wire so it doesn't fight the wire-mode banner. */}
-          {!wireInProgress &&
+              for touch devices (no Delete key, no right-click). Hidden:
+              - while creating a wire (would fight the wire-mode banner)
+              - on desktop (delete is bound to the Delete key, rotate is in
+                the right-click menu — the floating bar covered nearby pins
+                and intercepted clicks on buttons during simulation)
+              - while the simulator is running (canvas is read-only). */}
+          {!wireInProgress && isTouchDevice && !running &&
             (() => {
               if (selectedWireId) {
                 const wire = wires.find((w) => w.id === selectedWireId);
