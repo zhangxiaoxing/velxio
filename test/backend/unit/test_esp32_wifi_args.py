@@ -101,8 +101,18 @@ class TestEspQemuManagerWifiArgs(unittest.TestCase):
         """start_instance should accept wifi_enabled and wifi_hostfwd_port."""
         from app.services.esp_qemu_manager import EspQemuManager
         mgr = EspQemuManager()
-        # Should not raise
-        with patch('asyncio.create_task'):
+
+        # start_instance calls `asyncio.create_task(self._boot(...))`. The
+        # `_boot(...)` call creates a coroutine BEFORE create_task sees it,
+        # so simply mocking create_task with no side-effect lets the
+        # coroutine leak and trigger a "coroutine never awaited"
+        # RuntimeWarning in the test log.  Close the coroutine inside the
+        # mock to consume it cleanly.
+        def consume_coroutine(coro):
+            coro.close()
+            return MagicMock()
+
+        with patch('asyncio.create_task', side_effect=consume_coroutine):
             mgr.start_instance(
                 'test-client', 'esp32', MagicMock(),
                 firmware_b64=None,

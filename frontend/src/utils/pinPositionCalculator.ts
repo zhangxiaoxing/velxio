@@ -37,14 +37,23 @@ export function calculatePinPosition(
   // Get the DOM element
   const element = document.getElementById(componentId);
   if (!element) {
-    console.warn(`[pinPositionCalculator] Component ${componentId} not found in DOM`);
+    // Don't spam the vitest log: in node-side tests there's no real
+    // DOM and this function gets called per-wire on every render
+    // (each one logs "Component foo not found in DOM"). In a browser
+    // the warning is actionable — a wire references a component that
+    // failed to mount.
+    if (import.meta.env.MODE !== 'test') {
+      console.warn(`[pinPositionCalculator] Component ${componentId} not found in DOM`);
+    }
     return null;
   }
 
   // Access the pinInfo property (all wokwi-elements expose this)
   const pinInfo = (element as any).pinInfo;
   if (!pinInfo || !Array.isArray(pinInfo)) {
-    console.warn(`[pinPositionCalculator] Component ${componentId} does not have pinInfo`);
+    if (import.meta.env.MODE !== 'test') {
+      console.warn(`[pinPositionCalculator] Component ${componentId} does not have pinInfo`);
+    }
     return null;
   }
 

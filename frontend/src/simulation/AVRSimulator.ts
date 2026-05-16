@@ -508,12 +508,12 @@ export class AVRSimulator {
 
     this.running = true;
     console.log('Starting AVR simulation...');
-    try {
+    // Browser-only debug hook. Guarded so node-side vitest runs don't
+    // ReferenceError on `window` and spam stderr.
+    if (typeof window !== 'undefined') {
       const dbg = (window as unknown as { __spiceDebug?: () => void }).__spiceDebug;
       if (typeof dbg === 'function') dbg();
       else console.warn('[spice] __spiceDebug not attached — startSimulation never called');
-    } catch (e) {
-      console.warn('[spice] debug dump failed', e);
     }
 
     // ATmega328p @ 16MHz
