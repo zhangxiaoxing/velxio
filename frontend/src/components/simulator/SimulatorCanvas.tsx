@@ -1258,13 +1258,20 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   const handleComponentMouseDown = (componentId: string, e: React.MouseEvent) => {
     if (showPropertyDialog) return;
 
-    // While the simulator is running, the canvas is read-only. Don't
-    // intercept the mousedown — let it propagate to the underlying
-    // component (wokwi-pushbutton etc.) so it can fire button-press /
-    // change events. Without this, every press on a button on the Pico
-    // Doom canvas during a run was getting eaten by the drag/selection
-    // handler.
-    if (running) return;
+    // While running, the canvas is read-only and most components
+    // (pushbutton, switch, pot, …) need the raw event so their
+    // wokwi-element shadow DOM can fire button-press / change events —
+    // we let the mousedown propagate. Sensors are the exception: their
+    // only interaction is the SensorControlPanel we open ourselves, so
+    // we still claim the click for them (mouseUp opens the panel via
+    // the SENSOR_CONTROLS branch). Without this, sensor clicks during a
+    // run bubble to the canvas pan handler instead (grab cursor, no
+    // panel). Mirrors the touch tap flow above.
+    if (interactionRunning) {
+      const component = components.find((c) => c.id === componentId);
+      const isSensor = !!component && SENSOR_CONTROLS[component.metadataId] !== undefined;
+      if (!isSensor) return;
+    }
 
     e.stopPropagation();
     const component = components.find((c) => c.id === componentId);
