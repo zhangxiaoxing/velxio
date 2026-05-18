@@ -20,7 +20,14 @@ class Settings(BaseSettings):
     # and to build redirect URLs from auth routes in the overlay.
     FRONTEND_URL: str = "http://localhost:5173"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # extra="ignore": tolerate legacy keys (DATA_DIR, SECRET_KEY, DATABASE_URL, …)
+    # left over from pre-split .env files or from the velxio-prod overlay so the
+    # OSS image starts cleanly instead of crashing with extra_forbidden.
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 settings = Settings()
