@@ -147,14 +147,40 @@ def run() -> int:
             if not chunk:
                 break
             buf.extend(chunk)
-            if not saw_prompt and b"login on" in buf:
+            # Wait for the actual bash prompt (`:~#`) — `login on` alone
+            # fires from the login message line BEFORE bash is fully
+            # ready to read input. The :~# marker only appears once
+            # bash has printed PS1.
+            if not saw_prompt and b":~#" in buf:
                 saw_prompt = True
-                print("[test] login reached, sending Python GPIO call")
-                time.sleep(2)
-                cmd = (b"python3 -c \"import RPi.GPIO as G; "
-                       b"G.setmode(G.BCM); G.setup(17, G.OUT); "
-                       b"G.output(17, 1); import time; time.sleep(0.3); "
-                       b"print('SHIM_OK')\"\n")
+                print("[test] bash prompt reached, sending Python GPIO call")
+                time.sleep(3)
+                try:
+                    while True:
+                        more = sock.recv(4096)
+                        if not more:
+                            break
+                        buf.extend(more)
+                except socket.timeout:
+                    pass
+                # Send the Python test as a base64-encoded file —
+                # avoids all the bash/python -c quote-nesting hell
+                # (which silently corrupts the script and makes
+                # nothing happen, see the Phase 2 debug logs).
+                import base64
+                py = (
+                    "import RPi.GPIO as G\n"
+                    "G.setmode(G.BCM)\n"
+                    "G.setup(17, G.OUT)\n"
+                    "G.output(17, 1)\n"
+                    "import time; time.sleep(0.5)\n"
+                    "print('SHIM_OK')\n"
+                )
+                b64 = base64.b64encode(py.encode()).decode()
+                cmd = (
+                    f"echo {b64} | base64 -d > /tmp/shim_test.py && "
+                    f"python3 /tmp/shim_test.py\n"
+                ).encode()
                 sock.sendall(cmd)
                 sent_test = True
             if sent_test and b"SHIM_OK" in buf:
