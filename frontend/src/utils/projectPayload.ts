@@ -23,6 +23,11 @@ function serialisableBoard(b: BoardInstance) {
     languageMode: b.languageMode,
     serialBaudRate: b.serialBaudRate,
     compiledProgram: b.compiledProgram,
+    // ESP32 board options + uploaded SPIFFS files. Optional, only present
+    // after the user has opened Board Options... at least once. Both ride
+    // inside boards_json so there's no DB migration.
+    boardOptions: b.boardOptions,
+    spiffsFiles: b.spiffsFiles,
   };
 }
 

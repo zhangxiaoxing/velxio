@@ -245,6 +245,12 @@ export const EditorToolbar = ({
             })),
           ]);
         },
+        // Per-board ESP32 build options + SPIFFS uploads. Undefined for AVR
+        // / RP2040 boards (ignored on those paths by the backend).
+        {
+          boardOptions: activeBoard?.boardOptions,
+          spiffsFiles: activeBoard?.spiffsFiles,
+        },
       );
 
       // After the build settles, append the structured analysis on top of
@@ -654,6 +660,7 @@ export const EditorToolbar = ({
               })),
             ]);
           },
+          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles },
         );
 
         const resultLogs = parseCompileResult(result, label);

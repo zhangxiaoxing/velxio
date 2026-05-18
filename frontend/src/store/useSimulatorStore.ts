@@ -1157,6 +1157,19 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             ),
           }));
         }
+        if (b.boardOptions || b.spiffsFiles) {
+          set((s) => ({
+            boards: s.boards.map((bb) =>
+              bb.id === b.id
+                ? {
+                    ...bb,
+                    boardOptions: b.boardOptions,
+                    spiffsFiles: b.spiffsFiles,
+                  }
+                : bb,
+            ),
+          }));
+        }
       });
 
       // Replace editor file groups atomically. Skip groups that already exist

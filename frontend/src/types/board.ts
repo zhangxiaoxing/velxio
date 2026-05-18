@@ -74,6 +74,12 @@ export interface BoardInstance {
   hasWifi?: boolean; // set by compiler — true when sketch uses WiFi
   wifiStatus?: WifiStatus;
   bleStatus?: BleStatus;
+  // ESP32-only — populated when the user opens Board Options... on the
+  // canvas context menu. Undefined for AVR / RP2040 / Pi3 and for
+  // pre-feature saved projects (compiler falls back to defaults).
+  // Types live in `./boardOptions` to avoid a circular import.
+  boardOptions?: import('./boardOptions').ESP32BoardOptions;
+  spiffsFiles?: import('./boardOptions').SpiffsFile[];
 }
 
 export const BOARD_KIND_LABELS: Record<BoardKind, string> = {
