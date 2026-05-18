@@ -18,7 +18,7 @@ import type { I2CDevice } from '../simulation/I2CBusManager';
 import type { RP2040I2CDevice } from '../simulation/RP2040Simulator';
 import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode } from '../types/board';
-import { BOARD_SUPPORTS_MICROPYTHON } from '../types/board';
+import { BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind } from '../types/board';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
 import { useOscilloscopeStore } from './useOscilloscopeStore';
 import { RaspberryPi3Bridge } from '../simulation/RaspberryPi3Bridge';
@@ -954,11 +954,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
 
       const serialCallback = (ch: string) => appendSerial(id, ch);
 
-      if (
-        boardKind === 'raspberry-pi-3' ||
-        boardKind === 'raspberry-pi-4' ||
-        boardKind === 'raspberry-pi-5'
-      ) {
+      if (isPiBoardKind(boardKind)) {
         const bridge = new RaspberryPi3Bridge(id, boardKind);
         bridge.onSerialData = (ch: string) => {
           serialCallback(ch);
@@ -1084,7 +1080,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // Create the editor file group for this board
       useEditorStore.getState().createFileGroup(`group-${id}`);
       // Init VFS for Raspberry Pi 3 boards
-      if (boardKind === 'raspberry-pi-3') {
+      if (isPiBoardKind(boardKind)) {
         useVfsStore.getState().initBoardVfs(id);
       }
       // ── Interconnect: register the board and rebuild routes ──────────
@@ -1200,7 +1196,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       set({
         activeBoardId: boardId,
         // Sync legacy flat fields to this board's values
-        boardType: (board.boardKind === 'raspberry-pi-3'
+        boardType: (isPiBoardKind(board.boardKind)
           ? 'arduino-uno'
           : board.boardKind) as BoardType,
         boardPosition: { x: board.x, y: board.y },
@@ -1247,7 +1243,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         }
       } else {
         const sim = getBoardSimulator(boardId);
-        if (sim && board.boardKind !== 'raspberry-pi-3') {
+        if (sim && !isPiBoardKind(board.boardKind)) {
           try {
             if (sim instanceof AVRSimulator) {
               sim.loadHex(program);
@@ -1369,7 +1365,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
 
-      if (board.boardKind === 'raspberry-pi-3') {
+      if (isPiBoardKind(board.boardKind)) {
         getBoardBridge(boardId)?.connect();
       } else if (isEsp32Kind(board.boardKind)) {
         // Pre-register sensors connected to this board so the QEMU worker
@@ -1532,7 +1528,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
 
-      if (board.boardKind === 'raspberry-pi-3') {
+      if (isPiBoardKind(board.boardKind)) {
         getBoardBridge(boardId)?.disconnect();
       } else if (isEsp32Kind(board.boardKind)) {
         getEsp32Bridge(boardId)?.disconnect();
@@ -1558,7 +1554,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
           esp32Bridge.disconnect();
           setTimeout(() => esp32Bridge.connect(), 500);
         }
-      } else if (board.boardKind !== 'raspberry-pi-3') {
+      } else if (!isPiBoardKind(board.boardKind)) {
         const sim = getBoardSimulator(boardId);
         if (sim) {
           sim.reset();
@@ -2395,7 +2391,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
 
-      if (board.boardKind === 'raspberry-pi-3') {
+      if (isPiBoardKind(board.boardKind)) {
         const bridge = getBoardBridge(boardId);
         if (bridge) {
           for (let i = 0; i < text.length; i++) {
@@ -2424,7 +2420,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
     serialWriteToBoard: (boardId: string, text: string) => {
       const board = get().boards.find((b) => b.id === boardId);
       if (!board) return;
-      if (board.boardKind === 'raspberry-pi-3') {
+      if (isPiBoardKind(board.boardKind)) {
         const bridge = getBoardBridge(boardId);
         if (bridge) {
           for (let i = 0; i < text.length; i++) {

@@ -5,6 +5,7 @@
 
 import type { ExampleProject } from '../data/examples';
 import type { BoardKind } from '../types/board';
+import { isPiBoardKind } from '../types/board';
 import { useEditorStore } from '../store/useEditorStore';
 import { useSimulatorStore, DEFAULT_BOARD_POSITION } from '../store/useSimulatorStore';
 import { useElectricalStore } from '../store/useElectricalStore';
@@ -129,12 +130,12 @@ export async function loadExample(
         // Arduino-style boards (AVR, RP2040, ESP32, …) all need the `.ino`
         // extension so arduino-cli auto-includes <Arduino.h>. Only the Pi 3B
         // uses a different toolchain (Python via VFS or g++ for `.cpp`).
-        const filename = (eb.boardKind === 'raspberry-pi-3' || eb.boardKind === 'raspberry-pi-4' || eb.boardKind === 'raspberry-pi-5') ? 'main.cpp' : 'sketch.ino';
+        const filename = isPiBoardKind(eb.boardKind) ? 'main.cpp' : 'sketch.ino';
         useEditorStore.getState().setActiveGroup(board.activeFileGroupId);
         useEditorStore.getState().loadFiles([{ name: filename, content: eb.code }]);
       }
 
-      if (eb.vfsFiles && (eb.boardKind === 'raspberry-pi-3' || eb.boardKind === 'raspberry-pi-4' || eb.boardKind === 'raspberry-pi-5')) {
+      if (eb.vfsFiles && isPiBoardKind(eb.boardKind)) {
         const vfsState = useVfsStore.getState();
         const tree = vfsState.getTree(boardId);
         for (const [nodeId, node] of Object.entries(tree)) {
@@ -147,7 +148,7 @@ export async function loadExample(
 
     const firstArduinoIdx = example.boards.findIndex(
       (eb) =>
-        eb.boardKind !== 'raspberry-pi-3' && eb.boardKind !== 'raspberry-pi-4' && eb.boardKind !== 'raspberry-pi-5' &&
+        !isPiBoardKind(eb.boardKind) &&
         eb.boardKind !== 'esp32' &&
         eb.boardKind !== 'esp32-s3' &&
         eb.boardKind !== 'esp32-c3',
@@ -242,7 +243,7 @@ export async function loadExample(
       // appear blank. (Regression test: load-example-transitions.test.ts.)
       const editorStore = useEditorStore.getState();
       editorStore.setActiveGroup(liveBoard.activeFileGroupId);
-      const filename = (liveBoard.boardKind === 'raspberry-pi-3' || liveBoard.boardKind === 'raspberry-pi-4' || liveBoard.boardKind === 'raspberry-pi-5') ? 'main.cpp' : 'sketch.ino';
+      const filename = isPiBoardKind(liveBoard.boardKind) ? 'main.cpp' : 'sketch.ino';
       editorStore.loadFiles([{ name: filename, content: example.code }]);
     } else {
       // Truly board-less: write the placeholder code to whatever the editor

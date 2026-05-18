@@ -127,12 +127,9 @@ function isEsp32Bridge(boardKind: string): boolean {
 }
 
 function isPi3Bridge(boardKind: string): boolean {
-  // Pi 3 / 4 / 5 all use the same backend bridge (QEMU virt + virtio-serial).
-  return (
-    boardKind === 'raspberry-pi-3' ||
-    boardKind === 'raspberry-pi-4' ||
-    boardKind === 'raspberry-pi-5'
-  );
+  // Pi Zero / 1 / 2 / 3 / 4 / 5 all use the same backend bridge
+  // (QEMU virt + virtio-serial). Exclude raspberry-pi-pico (RP2040).
+  return boardKind.startsWith('raspberry-pi-') && boardKind !== 'raspberry-pi-pico';
 }
 
 /** Resolve `(componentId, pinName)` to a `(boardId, pinNumber)` pair. */

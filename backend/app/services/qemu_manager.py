@@ -66,6 +66,7 @@ PI_CONFIGS: dict[str, dict] = {
         'kernel':     'velxio-kernel-arm64',
         'initramfs':  'velxio-initramfs-arm64.cpio.gz',
         'rootfs':     'velxio-pi-rootfs-arm64.ext4',
+        'bus':        'pci',
     },
     'raspberry-pi-4': {
         'qemu':       'qemu-system-aarch64',
@@ -76,6 +77,7 @@ PI_CONFIGS: dict[str, dict] = {
         'kernel':     'velxio-kernel-arm64',
         'initramfs':  'velxio-initramfs-arm64.cpio.gz',
         'rootfs':     'velxio-pi-rootfs-arm64.ext4',
+        'bus':        'pci',
     },
     'raspberry-pi-5': {
         'qemu':       'qemu-system-aarch64',
@@ -86,8 +88,60 @@ PI_CONFIGS: dict[str, dict] = {
         'kernel':     'velxio-kernel-arm64',
         'initramfs':  'velxio-initramfs-arm64.cpio.gz',
         'rootfs':     'velxio-pi-rootfs-arm64.ext4',
+        'bus':        'pci',
     },
-    # Pi Zero/1/2 require armhf — added in Phase 3.3.
+    # ── armhf (32-bit ARM, Pi Zero / 1 / 2) ─────────────────────────────
+    # QEMU virt for arm-32 does not probe PCI cleanly (the pci-host-generic
+    # node is missing the "reg" DT property and probe fails -75), so we
+    # use the MMIO virtio transport instead: -device virtio-blk-device /
+    # virtio-serial-device. The kernel here is linux-image-armmp (Debian
+    # generic ARMv7) which ships ext4 + virtio_mmio as MODULES — the
+    # armhf initramfs bundles ext4.ko + jbd2.ko + mbcache.ko + crc16.ko +
+    # crc32c_generic.ko and insmods them in dep order before /dev/vda
+    # mount. Pi Zero / Pi 1 are ARMv6 which the Debian armmp kernel does
+    # not target; Phase 3.3b tracks sourcing an ARMv6 kernel for those.
+    'raspberry-pi-2': {
+        'qemu':       'qemu-system-arm',
+        'cpu':        'cortex-a7',
+        'smp':        '4',
+        'memory':     '1G',
+        'image_set':  'raspberry-pi-armhf',
+        'kernel':     'velxio-kernel-armhf',
+        'initramfs':  'velxio-initramfs-armhf.cpio.gz',
+        'rootfs':     'velxio-pi-rootfs-armhf.ext4',
+        'bus':        'mmio',
+    },
+    # Pi 1 / Pi Zero are ARMv6 on real silicon (arm1176, BCM2835). Debian
+    # dropped the ARMv6 kernel and Alpine's linux-rpi kernel is wired for
+    # the actual BCM2835 hardware (no virtio_blk, no ext4 module) so it
+    # cannot boot on QEMU virt. We follow the project's "looks-like-a-Pi
+    # but isn't-exactly-a-Pi" architecture rule: serve them off the same
+    # ARMv7 armmp kernel as Pi 2, with the smaller RAM / SMP profile of
+    # the real boards. User code that uses RPi.GPIO / smbus2 / spidev
+    # behaves identically. We do not advertise ARMv6 anywhere in the
+    # rootfs (no /proc/cpuinfo lying).
+    'raspberry-pi-1': {
+        'qemu':       'qemu-system-arm',
+        'cpu':        'cortex-a7',
+        'smp':        '1',
+        'memory':     '512M',
+        'image_set':  'raspberry-pi-armhf',
+        'kernel':     'velxio-kernel-armhf',
+        'initramfs':  'velxio-initramfs-armhf.cpio.gz',
+        'rootfs':     'velxio-pi-rootfs-armhf.ext4',
+        'bus':        'mmio',
+    },
+    'raspberry-pi-zero': {
+        'qemu':       'qemu-system-arm',
+        'cpu':        'cortex-a7',
+        'smp':        '1',
+        'memory':     '512M',
+        'image_set':  'raspberry-pi-armhf',
+        'kernel':     'velxio-kernel-armhf',
+        'initramfs':  'velxio-initramfs-armhf.cpio.gz',
+        'rootfs':     'velxio-pi-rootfs-armhf.ext4',
+        'bus':        'mmio',
+    },
 }
 
 # Default board if the client doesn't specify one. Kept for clients
@@ -315,6 +369,20 @@ class QemuManager:
         #
         # Why no -dtb: virt machine generates its own DTB on the fly
         # from the runtime device list, so we don't ship one.
+        # Virtio device suffix depends on the bus. arm64 virt has
+        # working PCI so we use the -pci variants there. arm-32 virt's
+        # pci-host-generic node has a broken DT (missing "reg" property)
+        # so the bus never enumerates — we have to fall back to the
+        # mmio variants. The same device names work for both blk and
+        # serial; only the suffix changes.
+        bus = cfg.get('bus', 'pci')
+        if bus == 'mmio':
+            blk_dev    = 'virtio-blk-device,drive=rootfs'
+            serial_dev = 'virtio-serial-device,id=virtio-serial0'
+        else:
+            blk_dev    = 'virtio-blk-pci,drive=rootfs'
+            serial_dev = 'virtio-serial-pci,id=virtio-serial0'
+
         cmd = [
             cfg['qemu'],
             '-M',      'virt',
@@ -323,12 +391,12 @@ class QemuManager:
             '-m',      cfg['memory'],
             '-kernel', str(kernel_path),
             '-initrd', str(initramfs_path),
-            # Root filesystem via virtio-blk over PCI. virt machine
-            # uses PCI as the primary virtio transport, so we use
-            # `virtio-blk-pci` (not `virtio-blk-device`, which is for
-            # mmio and silently leaves /dev/vda unregistered).
+            # Root filesystem via virtio-blk. arm64 uses the pci
+            # transport (works out of the box on virt-aarch64); armhf
+            # uses the mmio transport because PCI is broken on
+            # virt-arm32.
             '-drive',  f'if=none,file={inst.overlay_path},format=qcow2,id=rootfs',
-            '-device', 'virtio-blk-pci,drive=rootfs',
+            '-device', blk_dev,
             # No default network / display / monitor / serial — we add
             # exactly the two chardev-backed virtio-serial ports we
             # need.  -nographic auto-binds -serial mon:stdio which
@@ -342,7 +410,7 @@ class QemuManager:
             # port (replaces the old ttyAMA0 path).
             '-chardev', f'socket,id=cons,host=127.0.0.1,port={inst.serial_port},'
                        f'server=on,wait=off',
-            '-device', 'virtio-serial-pci,id=virtio-serial0',
+            '-device', serial_dev,
             '-device', 'virtconsole,chardev=cons',
             # Protocol channel: pipe (FIFO pair) instead of a socket
             # chardev. virtserialport on socket chardev has a known

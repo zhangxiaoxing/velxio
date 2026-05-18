@@ -68,6 +68,45 @@ export class ComponentRegistry {
       // same 40-pin GPIO header; the simulator backend picks a
       // different QEMU CPU model per board (Cortex-A53/A72/A76).
       data.components.push({
+        id: 'raspberry-pi-zero',
+        tagName: 'velxio-raspberry-pi-3',   // reuse 40-pin board art
+        name: 'Raspberry Pi Zero',
+        category: 'boards',
+        description: 'Raspberry Pi Zero with 40-pin GPIO. QEMU virt + Cortex-A7 (armhf) backend; presents the Pi Zero memory/SMP profile (1 core, 512 MB).',
+        thumbnail:
+          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#7E2553" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="9" fill="#FFF">RPi0</text></svg>',
+        properties: [],
+        defaultValues: {},
+        pinCount: 40,
+        tags: ['raspberry', 'pi', 'pi-zero', 'board', 'qemu', 'linux'],
+      });
+      data.components.push({
+        id: 'raspberry-pi-1',
+        tagName: 'velxio-raspberry-pi-3',   // reuse 40-pin board art
+        name: 'Raspberry Pi 1',
+        category: 'boards',
+        description: 'Raspberry Pi 1 Model B+ with 40-pin GPIO. QEMU virt + Cortex-A7 (armhf) backend; 1 core / 512 MB profile.',
+        thumbnail:
+          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#A8324B" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="9" fill="#FFF">RPi1</text></svg>',
+        properties: [],
+        defaultValues: {},
+        pinCount: 40,
+        tags: ['raspberry', 'pi', 'rp1', 'board', 'qemu', 'linux'],
+      });
+      data.components.push({
+        id: 'raspberry-pi-2',
+        tagName: 'velxio-raspberry-pi-3',
+        name: 'Raspberry Pi 2',
+        category: 'boards',
+        description: 'Raspberry Pi 2 Model B with 40-pin GPIO. QEMU virt + Cortex-A7 (armhf) backend; 4 cores / 1 GB.',
+        thumbnail:
+          '<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" fill="#C73E5A" rx="4"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" font-size="9" fill="#FFF">RPi2</text></svg>',
+        properties: [],
+        defaultValues: {},
+        pinCount: 40,
+        tags: ['raspberry', 'pi', 'rp2', 'board', 'qemu', 'linux'],
+      });
+      data.components.push({
         id: 'raspberry-pi-3',
         tagName: 'velxio-raspberry-pi-3',
         name: 'Raspberry Pi 3',

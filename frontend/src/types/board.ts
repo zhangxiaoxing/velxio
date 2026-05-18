@@ -4,6 +4,9 @@ export type BoardKind =
   | 'arduino-mega'
   | 'raspberry-pi-pico' // RP2040, browser emulation
   | 'pi-pico-w' // RP2040 + WiFi, browser emulation (WiFi ignored)
+  | 'raspberry-pi-zero' // QEMU virt + Cortex-A7 (armhf), backend — looks-like Pi Zero
+  | 'raspberry-pi-1'    // QEMU virt + Cortex-A7 (armhf), backend — looks-like Pi 1
+  | 'raspberry-pi-2'    // QEMU virt + Cortex-A7 (armhf), backend
   | 'raspberry-pi-3' // QEMU virt + Cortex-A53, backend
   | 'raspberry-pi-4' // QEMU virt + Cortex-A72, backend
   | 'raspberry-pi-5' // QEMU virt + Cortex-A76, backend
@@ -20,6 +23,13 @@ export type BoardKind =
   | 'attiny85'; // AVR ATtiny85, browser emulation (avr8js)
 
 export type LanguageMode = 'arduino' | 'micropython';
+
+/** True for every Raspberry Pi backed by the QEMU bridge (Zero, 1, 2, 3, 4, 5).
+ *  Excludes the Pico boards (RP2040, browser emulation). */
+export function isPiBoardKind(kind: BoardKind | string): boolean {
+  return typeof kind === 'string' && kind.startsWith('raspberry-pi-')
+    && kind !== 'raspberry-pi-pico';
+}
 
 export const BOARD_SUPPORTS_MICROPYTHON = new Set<BoardKind>([
   'raspberry-pi-pico',
@@ -72,6 +82,9 @@ export const BOARD_KIND_LABELS: Record<BoardKind, string> = {
   'arduino-mega': 'Arduino Mega 2560',
   'raspberry-pi-pico': 'Raspberry Pi Pico',
   'pi-pico-w': 'Raspberry Pi Pico W',
+  'raspberry-pi-zero': 'Raspberry Pi Zero',
+  'raspberry-pi-1': 'Raspberry Pi 1B+',
+  'raspberry-pi-2': 'Raspberry Pi 2B',
   'raspberry-pi-3': 'Raspberry Pi 3B',
   'raspberry-pi-4': 'Raspberry Pi 4B',
   'raspberry-pi-5': 'Raspberry Pi 5',
@@ -94,6 +107,9 @@ export const BOARD_KIND_FQBN: Record<BoardKind, string | null> = {
   'arduino-mega': 'arduino:avr:mega',
   'raspberry-pi-pico': 'rp2040:rp2040:rpipico',
   'pi-pico-w': 'rp2040:rp2040:rpipicow',
+  'raspberry-pi-zero': null,
+  'raspberry-pi-1': null,
+  'raspberry-pi-2': null,
   'raspberry-pi-3': null,
   'raspberry-pi-4': null,
   'raspberry-pi-5': null,

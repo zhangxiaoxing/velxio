@@ -33,6 +33,37 @@
         }
       ]
     },
+    "raspberry-pi-armhf": {
+      "description": "Raspberry Pi Zero / 1 / 2 simulator on QEMU -M virt + cortex-a7. Velxio-built armhf kernel (Debian armmp) + initramfs (bundled ext4 + jbd2 + mbcache + crc16 + crc32c_generic + virtio_blk + virtio_mmio) + Alpine-based armhf rootfs. arm-32 virt PCI is broken (missing reg DT prop) so the QEMU command uses the mmio virtio transport; Pi Zero / Pi 1 share this image set with Pi 2 because the real ARMv6 silicon they have isn't supported by any QEMU-virt-capable upstream kernel.",
+      "images": [
+        {
+          "name": "velxio-kernel-armhf",
+          "asset_id": "velxio-kernel-armhf",
+          "sha256": "9d7377c33b9a5631e99ab109c8d3d9d89f99331b53eb8cc755cd76e775c9d0d5",
+          "size_bytes": 6033920,
+          "version": "2026.05+v6.12.88-armmp+ext4mods"
+        },
+        {
+          "name": "velxio-initramfs-armhf.cpio.gz",
+          "asset_id": "velxio-initramfs-armhf",
+          "sha256": "611eb3d219cb5d71a534d417dea564ed6eadbd2d1b40e33d28bb4a5a5f5829f5",
+          "size_bytes": 1390924,
+          "version": "2026.05+ext4mods"
+        },
+        {
+          "name": "velxio-pi-rootfs-armhf.ext4",
+          "asset_id": "velxio-pi-rootfs-armhf-zst",
+          "sha256": "5f2eafc0e76acc9ecc79da42313c1ffaacd577f42df5a58934d97ea167fab4ee",
+          "size_bytes": 629145600,
+          "version": "2026.05+phase2-shims-armhf",
+          "compressed": {
+            "encoding": "zstd",
+            "sha256": "ce9037b371aa1e847f2ce16bf6b0067c4ef51d48b66fe4c2d79941cbdff37b30",
+            "size_bytes": 23322299
+          }
+        }
+      ]
+    },
     "raspberry-pi-3": {
       "description": "[DEPRECATED \u2014 kept for one release to ease rollback] Original raspi3b setup. Replaced by 'raspberry-pi-3-virt' (see above). qemu_manager.py no longer references this entry; do not add new clients here.",
       "deprecated": true,

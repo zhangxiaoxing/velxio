@@ -144,15 +144,8 @@ function tableFor(boardKind: BoardKind | string): RoleTable | null {
   if (boardKind === 'raspberry-pi-pico' || boardKind === 'pi-pico-w') return RP2040_DEFAULT;
   if (boardKind === 'esp32-c3' || (boardKind as string).startsWith('esp32-c3')) return ESP32_C3_DEFAULT;
   if (boardKind === 'esp32' || (boardKind as string).startsWith('esp32')) return ESP32_DEFAULT;
-  // Pi 3/4/5 all share the same 40-pin GPIO header → same BCM table.
-  if (
-    boardKind === 'raspberry-pi-3' ||
-    boardKind === 'raspberry-pi-4' ||
-    boardKind === 'raspberry-pi-5' ||
-    (boardKind as string).startsWith('raspberry-pi-3') ||
-    (boardKind as string).startsWith('raspberry-pi-4') ||
-    (boardKind as string).startsWith('raspberry-pi-5')
-  )
+  // Pi Zero/1/2/3/4/5 all share the same 40-pin GPIO header → same BCM table.
+  if ((boardKind as string).startsWith('raspberry-pi-'))
     return PI3_BCM;
   return ARDUINO_NANO; // default fallback: treat unknown as arduino-uno-like
 }

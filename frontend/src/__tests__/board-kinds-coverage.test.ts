@@ -41,8 +41,11 @@ const ALL_EXAMPLES: ExampleProject[] = [
  * coverage gap visible at code-review time.
  */
 const ACCEPTED_UNCOVERED: ReadonlySet<BoardKind> = new Set([
-  // Pi 3/4/5 run on the backend (QEMU ARM64) — no in-browser canvas
-  // example because they boot a full Linux image.
+  // Pi Zero / 1 / 2 / 3 / 4 / 5 run on the backend (QEMU ARM/ARM64) — no
+  // in-browser canvas example because they boot a full Linux image.
+  'raspberry-pi-zero',
+  'raspberry-pi-1',
+  'raspberry-pi-2',
   'raspberry-pi-3',
   'raspberry-pi-4',
   'raspberry-pi-5',
