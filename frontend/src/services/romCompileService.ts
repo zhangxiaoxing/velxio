@@ -6,7 +6,7 @@
  */
 
 export type RomTarget = '8080' | 'z80' | '8086' | '4004';
-export type RomFormat = 'asm' | 'hex' | 'bin';
+export type RomFormat = 'asm' | 'hex' | 'bin' | 'c';
 
 export interface RomCompileResult {
   success: boolean;
@@ -42,7 +42,13 @@ export async function compileRom(
   return (await res.json()) as RomCompileResult;
 }
 
-/** Classify a filename as a chip-program file (vs an Arduino sketch). */
+/** Classify a filename as a chip-program file (vs an Arduino sketch).
+ *
+ * `.c` is intentionally NOT in the always-list — Arduino sketches use .c
+ * too. The toolbar disambiguates by checking whether a custom-chip on
+ * the canvas has `programFile === activeFile.name`. If yes, .c is a chip
+ * program (SDCC route); if no, it's an Arduino sketch (arduino-cli route).
+ */
 export function isChipProgramFile(name: string): boolean {
   const lower = name.toLowerCase();
   return (
@@ -58,6 +64,7 @@ export function formatForFile(name: string): RomFormat {
   const lower = name.toLowerCase();
   if (lower.endsWith('.hex')) return 'hex';
   if (lower.endsWith('.bin')) return 'bin';
+  if (lower.endsWith('.c') || lower.endsWith('.cpp')) return 'c';
   return 'asm';
 }
 

@@ -161,22 +161,36 @@ export const EditorToolbar = ({
     trackCompileCode();
 
     // ── Chip-program path ───────────────────────────────────────────────
-    // If the editor's active file is a chip-program file (.s/.asm/.hex/.bin)
-    // we don't compile Arduino code at all — we assemble or parse it into
-    // ROM bytes via /api/compile-rom and stash the result on every
-    // custom-chip component that points at this filename through its
-    // `programFile` property. The chip's emulator then reads the bytes on
-    // chip_setup via vx_rom_size / vx_rom_read.
+    // If the editor's active file is a chip-program file we don't compile
+    // Arduino code — we assemble/compile it into ROM bytes via
+    // /api/compile-rom and stash the result on every custom-chip component
+    // that points at this filename through its `programFile` property. The
+    // chip's emulator then reads the bytes on chip_setup via vx_rom_size /
+    // vx_rom_read.
+    //
+    // A file is "chip program" when EITHER its extension is unambiguous
+    // (.s/.asm/.hex/.bin) OR some custom-chip on the canvas has
+    // programFile === activeFile.name. The latter lets .c files route to
+    // SDCC instead of arduino-cli when wired to a CPU chip.
     const activeFile = files.find((f) => f.id === useEditorStore.getState().activeFileId);
-    if (activeFile && isChipProgramFile(activeFile.name)) {
-      try {
-        const components = useSimulatorStore.getState().components;
-        const chips = components.filter((c) => {
+    const componentsForCompile = useSimulatorStore.getState().components;
+    const chipsBoundToFile = activeFile
+      ? componentsForCompile.filter((c) => {
           if (c.metadataId !== 'custom-chip') return false;
           const prog = String((c.properties as any)?.programFile ?? '').trim();
-          // Empty programFile → also accept (single-chip canvases).
-          return prog === '' || prog === activeFile.name;
-        });
+          return prog === activeFile.name;
+        })
+      : [];
+
+    if (activeFile && (isChipProgramFile(activeFile.name) || chipsBoundToFile.length > 0)) {
+      try {
+        const chips = chipsBoundToFile.length > 0
+          ? chipsBoundToFile
+          : componentsForCompile.filter((c) => {
+              if (c.metadataId !== 'custom-chip') return false;
+              const prog = String((c.properties as any)?.programFile ?? '').trim();
+              return prog === '' || prog === activeFile.name;
+            });
         if (chips.length === 0) {
           addLog({
             timestamp: new Date(),

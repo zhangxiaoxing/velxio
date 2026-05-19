@@ -88,7 +88,7 @@ def assemble_z80(source: str) -> bytes:
     return _asmz80().assemble(source)
 
 
-def compile_rom(source: str, target: Target, fmt: Format) -> dict:
+async def compile_rom(source: str, target: Target, fmt: Format) -> dict:
     """Compile a chip-program source to ROM bytes.
 
     Returns a dict shaped like:
@@ -166,10 +166,34 @@ def compile_rom(source: str, target: Target, fmt: Format) -> dict:
             "stderr": "", "error": None,
         }
 
+    if fmt_l == "c":
+        # C source via SDCC (Z80 only — pure 8080 has no SDCC backend; Z80
+        # is binary-compat with 8080 so the same .c can target both chips).
+        from app.services.c_compile import compile_c  # lazy — keeps the
+                                                       # import out of the
+                                                       # asm/hex/bin path.
+        result = await compile_c(source, tgt_l if tgt_l in ("z80", "8080") else "z80")
+        rom = result.get("rom_bytes", b"")
+        if not result.get("success"):
+            return {
+                "success": False,
+                "rom_base64": None,
+                "byte_size": 0,
+                "stderr": result.get("stderr", ""),
+                "error": result.get("error", "C compile failed"),
+            }
+        return {
+            "success": True,
+            "rom_base64": base64.b64encode(rom).decode("ascii"),
+            "byte_size": len(rom),
+            "stderr": result.get("stderr", ""),
+            "error": None,
+        }
+
     return {
         "success": False,
         "rom_base64": None,
         "byte_size": 0,
         "stderr": "",
-        "error": f"Unknown format {fmt!r} — expected asm / hex / bin.",
+        "error": f"Unknown format {fmt!r} — expected asm / hex / bin / c.",
     }

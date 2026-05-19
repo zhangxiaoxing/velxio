@@ -169,6 +169,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ccache \
     qemu-system-arm \
     qemu-utils \
+    sdcc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir packaging

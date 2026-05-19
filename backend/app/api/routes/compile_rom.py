@@ -49,7 +49,7 @@ async def compile_rom_endpoint(request: RomCompileRequest):
     if not request.source.strip() and request.format != "bin":
         raise HTTPException(status_code=422, detail="`source` cannot be empty.")
     try:
-        result = compile_rom(request.source, request.target, request.format)  # type: ignore[arg-type]
+        result = await compile_rom(request.source, request.target, request.format)  # type: ignore[arg-type]
     except Exception as e:  # noqa: BLE001
         logger.exception("ROM compile failed")
         raise HTTPException(status_code=500, detail=str(e))
