@@ -23,20 +23,19 @@ export default defineConfig({
     include: ['src/__tests__/**/*.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    poolOptions: {
-      forks: {
-        singleFork: false,
-        // Vitest 4's forks pool spawns workers with its own execArgv
-        // and does NOT inherit NODE_OPTIONS from the parent shell, so
-        // raising `--max-old-space-size` via the GHA env-var has no
-        // effect on the actual worker process. The full suite leaks
-        // ngspice WASM modules + singleton state across 117 files and
-        // hits Node's 4 GB default at the end of the run ("Worker
-        // exited unexpectedly / Ineffective mark-compacts near heap
-        // limit"). Bump to 8 GB at the pool level so it actually
-        // takes effect.
-        execArgv: ['--max-old-space-size=8192'],
-      },
+    // Vitest 4 removed `test.poolOptions` — config moved to top-level
+    // `forks` / `threads` / etc. See the deprecation banner the runner
+    // emits: "DEPRECATED test.poolOptions was removed in Vitest 4. All
+    // previous poolOptions are now top-level options."
+    //
+    // Each forked worker also needs its heap cap raised because the
+    // suite leaks state across the 117 test files (ngspice WASM ~30 MB
+    // per init, MixedModeScheduler singleton, zustand stores). Even
+    // sharded (60 files / shard) the leak overflows Node's 4 GB
+    // default; 8 GB plus sharding fits the runner's 16 GB budget.
+    forks: {
+      singleFork: false,
+      execArgv: ['--max-old-space-size=8192'],
     },
     coverage: {
       provider: 'v8',

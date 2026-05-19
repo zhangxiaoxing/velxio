@@ -77,11 +77,16 @@ jobs:
 
       - name: Run tests (shard ${{ matrix.shard }}/2)
         run: cd frontend && npx vitest run --shard ${{ matrix.shard }}/2
-        # Heap is also raised inside the vitest config via
-        # poolOptions.forks.execArgv — forks pool ignores
-        # NODE_OPTIONS. With sharding each runner only carries
-        # ~60 test files' worth of leaked WASM/singleton state
-        # so the heap stays well under the ceiling.
+        env:
+          # Belt-and-braces heap raise. The same flag is also set in
+          # vitest.config.ts under `forks.execArgv`, but that path was
+          # under the now-removed `poolOptions.forks` until the latest
+          # commit, and we want the workflow not to depend on the
+          # exact vitest config shape to keep CI green during the
+          # vitest 4 migration. NODE_OPTIONS gets picked up by the
+          # parent vitest process; the forks themselves rely on the
+          # config.
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # Production build smoke — catches Vite/Rollup-only failures that
       # vitest doesn't see (chunk wiring, dynamic imports, manualChunks
