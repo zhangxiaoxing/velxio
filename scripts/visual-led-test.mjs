@@ -48,7 +48,11 @@ const DEFAULT_SUITE = [
     expectGradient: true,
     note: 'Brightness must hit 3+ distinct non-zero values (smooth fade)' },
   { slug: 'rgb-led', label: 'RGB 3-PWM driven', simulateMs: 12000,
-    leafCheck: 'pwmActive' },
+    leafCheck: 'rgbLed',
+    note: 'wokwi-rgb-led ledRed/Green/Blue MUST cycle — catches PinTracer signature bug' },
+  { slug: 'uno-7segment', label: '7-segment counter', simulateMs: 8000,
+    leafCheck: 'sevenSegment',
+    note: 'wokwi-7segment.values MUST hit ≥4 distinct digit patterns — catches the PinResolver-floating bug for any handler that subscribes per pin' },
 ];
 
 // ── CDP plumbing ──────────────────────────────────────────────────────────
@@ -181,6 +185,57 @@ async function runOne(cdp, ex) {
     return result;
   }
 
+  if (ex.leafCheck === 'rgbLed') {
+    // wokwi-rgb-led exposes ledRed/Green/Blue (0-255). Visual correctness
+    // requires each channel to take ≥2 distinct values during the cycle.
+    // Without that, the SPICE side may be driving the pins but the visual
+    // is stuck (the canonical PinTracer-signature bug).
+    const rgbSamples = await cdp.eval(`
+      (async () => {
+        const out = [];
+        for (let i = 0; i < 16; i++) {
+          const el = document.querySelector('wokwi-rgb-led');
+          out.push({ R: el?.ledRed ?? null, G: el?.ledGreen ?? null, B: el?.ledBlue ?? null });
+          await new Promise(r => setTimeout(r, 400));
+        }
+        return out;
+      })()
+    `, { awaitPromise: true });
+    if (!rgbSamples || rgbSamples[0].R === null) {
+      result.fail = 'no wokwi-rgb-led element found';
+      return result;
+    }
+    const rs = new Set(rgbSamples.map(s => s.R));
+    const gs = new Set(rgbSamples.map(s => s.G));
+    const bs = new Set(rgbSamples.map(s => s.B));
+    result.distinctR = rs.size; result.distinctG = gs.size; result.distinctB = bs.size;
+    if (rs.size < 2 || gs.size < 2 || bs.size < 2) {
+      result.fail = `RGB channel(s) stuck — distinct R=${rs.size} G=${gs.size} B=${bs.size} (each MUST be ≥2)`;
+    }
+    return result;
+  }
+
+  if (ex.leafCheck === 'sevenSegment') {
+    // wokwi-7segment exposes `values` (length-8 array, segments a..g + dp).
+    // A working counter must hit ≥4 distinct patterns during the run.
+    const patterns = await cdp.eval(`
+      (async () => {
+        const out = new Set();
+        for (let i = 0; i < 12; i++) {
+          const el = document.querySelector('wokwi-7segment');
+          if (el?.values) out.add(Array.from(el.values).join(','));
+          await new Promise(r => setTimeout(r, 500));
+        }
+        return [...out];
+      })()
+    `, { awaitPromise: true });
+    result.distinctPatterns = patterns?.length ?? 0;
+    if (!patterns || patterns.length < 4) {
+      result.fail = `7-seg only ${patterns?.length ?? 0} distinct pattern(s) — display stuck or not driving segments`;
+    }
+    return result;
+  }
+
   // Standard LED assertions.
   if (samples[0].leds.length === 0) {
     // No wokwi-led on canvas — only validate SPICE pin activity.
@@ -271,7 +326,11 @@ async function main() {
         failed++;
       } else {
         let detail;
-        if (r.outputPinCount != null && r.maxBrightness == null) {
+        if (r.distinctR != null) {
+          detail = `RGB channels distinct R=${r.distinctR} G=${r.distinctG} B=${r.distinctB}`;
+        } else if (r.distinctPatterns != null) {
+          detail = `7-seg patterns=${r.distinctPatterns}`;
+        } else if (r.outputPinCount != null && r.maxBrightness == null) {
           detail = `no canvas LED, ${r.outputPinCount} pin(s) driven`;
         } else if (r.outputPinCount != null) {
           detail = `${r.outputPinCount} pin(s) driven, max=${r.maxBrightness} min=${r.minBrightness}`;
