@@ -5185,7 +5185,13 @@ const float NOM_TEMP_K  = 298.15;   // 25 °C in Kelvin
 float readTempC() {
   int   raw  = analogRead(NTC_PIN);
   float v    = raw * (VCC / 1023.0);
-  float r    = SERIES_R * v / (VCC - v);  // voltage divider
+  // Voltage divider topology used by standard NTC modules and by Velxio's
+  // wokwi-ntc-temperature-sensor: VCC → R_NTC → A1 → R_pull (10k) → GND.
+  // Higher temperature → R_NTC drops → V rises, so the NTC resistance is
+  //   r = R_pull * (VCC - v) / v
+  // Using the inverted form (r = R_pull * v / (VCC - v)) gives the wrong
+  // sign and Steinhart-Hart returns negative temperatures for hot inputs.
+  float r    = SERIES_R * (VCC - v) / v;
   // Steinhart–Hart simplified equation
   float st   = log(r / NOM_R) / B_COEFF + 1.0 / NOM_TEMP_K;
   return (1.0 / st) - 273.15;
@@ -5514,7 +5520,8 @@ const float NOM_TEMP_K = 298.15; // 25 °C
 float readTempC() {
   int   raw = analogRead(NTC_PIN);
   float v   = raw * (VCC / 1023.0);
-  float r   = SERIES_R * v / (VCC - v);
+  // VCC → R_NTC → A1 → R_pull → GND  (standard NTC module topology)
+  float r   = SERIES_R * (VCC - v) / v;
   float st  = log(r / NOM_R) / B_COEFF + 1.0 / NOM_TEMP_K;
   return (1.0 / st) - 273.15;
 }

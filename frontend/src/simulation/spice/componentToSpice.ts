@@ -1220,6 +1220,14 @@ for (const [presetId, baseId] of Object.entries(PASSIVE_PRESETS)) {
   MAPPERS[presetId] = MAPPERS[baseId];
 }
 
+// Alias: metadata id for the wokwi-photoresistor-sensor breakout is
+// `photoresistor-sensor`, but the mapper is registered under the short
+// name `photoresistor` (matches the bare LDR/discrete element). Without
+// this alias, any example that drops a photoresistor sensor on the
+// canvas gets a null mapping → no R_ldr / R_pull emitted → A0 net
+// floats → analogRead returns 0 even though the divider should solve.
+MAPPERS['photoresistor-sensor'] = MAPPERS['photoresistor'];
+
 /**
  * Public entry: map one Velxio component to SPICE cards.
  * Returns null if we have no mapping for this metadataId (caller should

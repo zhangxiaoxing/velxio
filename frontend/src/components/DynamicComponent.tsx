@@ -276,12 +276,37 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
    */
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (onMouseDown) {
-        e.stopPropagation();
-        onMouseDown(e);
+      if (!onMouseDown) return;
+      // Don't swallow the pointerdown when the user is interacting with a
+      // live wokwi component (rotating a potentiometer knob, pressing a
+      // pushbutton, toggling a slide-switch, dragging the joystick stick,
+      // etc.). The wokwi-elements internally use pointerdown/move/up on
+      // their shadow-DOM SVGs; if we call stopPropagation() in the capture
+      // phase here, that internal logic NEVER receives the event and the
+      // knob can't rotate, the button never reports pressed, etc.
+      //
+      // The canvas's drag-to-rearrange flow still works: the user can grab
+      // the component WRAPPER (its padding/border) or any non-interactive
+      // part of the body. For interactive parts the wokwi component owns
+      // the click — same UX as Wokwi/Tinkercad.
+      //
+      // We additionally allow the canvas drag when the simulation is NOT
+      // running (interactionRunning=false): the user is in "edit mode"
+      // arranging the board, so capturing the click into a canvas drag
+      // is the correct behaviour even on interactive components.
+      const target = e.target as HTMLElement;
+      const targetIsInteractive =
+        isInteractive &&
+        interactionRunning &&
+        target.tagName.toLowerCase().startsWith('wokwi-');
+      if (targetIsInteractive) {
+        // Let the wokwi component own this pointerdown.
+        return;
       }
+      e.stopPropagation();
+      onMouseDown(e);
     },
-    [onMouseDown],
+    [onMouseDown, isInteractive, interactionRunning],
   );
 
   const handleDoubleClick = useCallback(
