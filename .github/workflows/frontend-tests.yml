@@ -13,6 +13,16 @@ jobs:
       fail-fast: false
       matrix:
         node-version: ['20', '22']
+        # Shard the 117 test files across two parallel runners per node
+        # version. The full suite leaks memory across files within one
+        # vitest fork — ngspice WASM modules, MixedModeScheduler
+        # singletons, zustand stores — and the cumulative heap exceeds
+        # even 8 GB. Sharding gives each runner a fresh Node process
+        # with only ~60 files of state to carry, well under budget.
+        # Splits are deterministic across runs (vitest hashes file
+        # paths into shards), so a flaky file lands in the same shard
+        # each time.
+        shard: [1, 2]
 
     steps:
       - name: Checkout repository
@@ -65,18 +75,13 @@ jobs:
         run: cd frontend && npm run tsc
         continue-on-error: true  # tsc -b has pre-existing strict errors in unrelated test files; tracking separately
 
-      - name: Run tests
-        run: cd frontend && npm test
-        env:
-          # Vitest 4 forks pool keeps state alive across the 117 test
-          # files in one worker process, and several of those tests
-          # load the ngspice emscripten module (~30 MB each), the
-          # MixedModeScheduler singleton, and other lazy modules.
-          # Cumulative heap pressure exceeds Node's 4 GB default by
-          # the end of the suite and the OOM kills the worker AFTER
-          # all 1881 tests pass. Bump to 8 GB until the test files
-          # are sharded or singletons get proper dispose hooks.
-          NODE_OPTIONS: --max-old-space-size=8192
+      - name: Run tests (shard ${{ matrix.shard }}/2)
+        run: cd frontend && npx vitest run --shard ${{ matrix.shard }}/2
+        # Heap is also raised inside the vitest config via
+        # poolOptions.forks.execArgv — forks pool ignores
+        # NODE_OPTIONS. With sharding each runner only carries
+        # ~60 test files' worth of leaked WASM/singleton state
+        # so the heap stays well under the ceiling.
 
       # Production build smoke — catches Vite/Rollup-only failures that
       # vitest doesn't see (chunk wiring, dynamic imports, manualChunks
@@ -93,15 +98,16 @@ jobs:
         run: cd frontend && npm run build:docker
 
       # Upload coverage as an artifact for download / inspection.  Skip
-      # codecov for now (no org account).  Run only on Node 22 to keep the
-      # artifact list deduped.
+      # codecov for now (no org account).  Run only on Node 22 +
+      # shard 1 to keep the artifact list deduped and avoid two
+      # matrix legs racing to write the same artifact name.
       - name: Coverage report
-        if: matrix.node-version == '22'
+        if: matrix.node-version == '22' && matrix.shard == 1
         run: cd frontend && npm run test:coverage
         continue-on-error: true
 
       - name: Upload coverage artifact
-        if: matrix.node-version == '22' && always()
+        if: matrix.node-version == '22' && matrix.shard == 1 && always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
