@@ -369,11 +369,29 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
       // Helper to find Arduino pin connected to a component pin.
       // Traces through electrically-transparent passive components so that a
       // circuit like  LED-cathode → resistor → GND  returns -1 (GND) instead
-      // of null. Delegates to the module-level `traceDetailed` (shared with
-      // getPinResolver).
-      const getArduinoPin = (componentPinName: string): number | null => {
+      // of null. Delegates to the module-level `traceDetailed`.
+      //
+      // Two call shapes are supported because this same function is passed
+      // BOTH to PartSimulationRegistry handlers (which call it as
+      // `getArduinoPin(componentPinName)`) AND to `createDefaultPinResolver`
+      // as a `PinTracer` (which calls it as `tracePin(componentId,
+      // componentPinName)`). When the second arg is present we treat the
+      // first as a componentId override; otherwise we use the closure-
+      // captured component id. The previous single-arg signature silently
+      // matched the PinTracer 2-arg call as `(componentId, undefined)` —
+      // traceDetailed then looked up a pin literally named "rgb-led-1" on
+      // component "rgb-led-1", got null, and the PinResolver reported
+      // FLOATING forever (the canonical "wokwi-rgb-led never lights up
+      // even though SPICE is driving R/G/B" symptom).
+      const getArduinoPin = (
+        componentIdOrPin: string,
+        maybePinName?: string,
+      ): number | null => {
         const state = useSimulatorStore.getState();
-        return traceDetailed(state, id, componentPinName, 0).arduinoPin;
+        const componentId = maybePinName !== undefined ? componentIdOrPin : id;
+        const componentPinName =
+          maybePinName !== undefined ? maybePinName : componentIdOrPin;
+        return traceDetailed(state, componentId, componentPinName, 0).arduinoPin;
       };
 
       // PinResolver factory — Phase 0 of the mixed-mode simulator project
