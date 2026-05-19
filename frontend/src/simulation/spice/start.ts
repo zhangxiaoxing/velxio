@@ -17,7 +17,7 @@
  *
  * Phase 1c step G1 of the mixed-mode migration.
  */
-import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { useSimulatorStore, getBoardPinManager } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
 import {
   getMixedModeScheduler,
@@ -86,22 +86,41 @@ export function startSimulation(): () => void {
   // to get a snapshot of the simulation state (analysis mode, voltage
   // count, pin map, last solve time, etc.).  Useful for diagnosing
   // "why is my circuit not solving?" reports from users.
-  (window as unknown as { __spiceDebug?: () => void }).__spiceDebug = () => {
+  (window as unknown as { __spiceDebug?: () => unknown }).__spiceDebug = () => {
     const electrical = useElectricalStore.getState();
-    // eslint-disable-next-line no-console
-    console.log('[__spiceDebug]', {
+    // Probe: collect every board's outputPins set so we can verify the
+    // MCU-direction-tracking fix from the harness.
+    const outputPinsByBoard: Record<string, number[]> = {};
+    try {
+      const boards = useSimulatorStore.getState().boards;
+      for (const b of boards) {
+        const pm = getBoardPinManager(b.id);
+        if (pm && typeof pm.getOutputPins === 'function') {
+          outputPinsByBoard[b.id] = [...pm.getOutputPins()];
+        }
+      }
+    } catch {
+      // ignore — fallback already covered by snapshot fields below
+    }
+    const snapshot = {
       analysisMode: electrical.analysisMode,
       converged: electrical.converged,
       error: electrical.error,
       lastSolveMs: electrical.lastSolveMs,
       nodeVoltageCount: Object.keys(electrical.nodeVoltages).length,
       branchCurrentCount: Object.keys(electrical.branchCurrents).length,
+      branchCurrentNames: Object.keys(electrical.branchCurrents),
       pinNetMapSize: electrical.pinNetMap.size,
+      pinNetMapEntries: [...electrical.pinNetMap.entries()],
+      nodeVoltages: { ...electrical.nodeVoltages },
       hasTimeWaveforms: !!electrical.timeWaveforms,
       paused: electrical.paused,
-      sampleVoltages: Object.entries(electrical.nodeVoltages).slice(0, 8),
-      pinNetSample: [...electrical.pinNetMap.entries()].slice(0, 8),
-    });
+      outputPinsByBoard,
+    };
+    (window as unknown as { __lastSpice?: unknown }).__lastSpice = snapshot;
+    // eslint-disable-next-line no-console
+    console.log('[__spiceDebug]', snapshot);
+    return snapshot;
   };
 
   return () => {

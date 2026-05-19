@@ -37,6 +37,7 @@
 
 import type { SolverPort, SolveAnalysis } from './ports/SolverPort';
 import { NgSpiceWorkerAdapter } from './adapters/NgSpiceWorkerAdapter';
+import { sanitizeSpiceId } from './NetlistBuilder';
 import type { PinState, SpiceVoltageSource } from '../PinResolver';
 
 /**
@@ -249,7 +250,10 @@ class MixedModeSchedulerImpl implements SpiceVoltageSource {
     vcc: number,
   ): Promise<void> {
     if (!this.solver) return;
-    const sourceName = `V_${boardId}_${pinName}`;
+    // Must match the sanitized name NetlistBuilder emits — see comment
+    // at the V-source emission site for why ngspice's `alter` command
+    // can't accept hyphens.
+    const sourceName = `V_${sanitizeSpiceId(boardId)}_${sanitizeSpiceId(pinName)}`;
     const voltage = state ? vcc : 0;
     await this.solver.alterSource(sourceName, voltage);
     await this.resolveDc();

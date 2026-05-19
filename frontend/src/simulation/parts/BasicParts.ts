@@ -13,6 +13,13 @@ PartSimulationRegistry.register('pushbutton', {
       getArduinoPinHelper('1.r') ??
       getArduinoPinHelper('2.r');
 
+    // Seed the input pin HIGH so `digitalRead()` returns HIGH while the
+    // button is idle.  avr8js does not auto-simulate INPUT_PULLUP — without
+    // this, the firmware reads LOW from the moment loop() starts and
+    // believes the button is permanently pressed (the classic "LED is
+    // always on, pressing the button does nothing" UX bug).
+    if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, true);
+
     const onButtonPress = () => {
       if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, false); // Active LOW
       (element as any).pressed = true;
@@ -43,6 +50,10 @@ PartSimulationRegistry.register('pushbutton-6mm', {
       getArduinoPinHelper('2.l') ??
       getArduinoPinHelper('1.r') ??
       getArduinoPinHelper('2.r');
+
+    // Same INPUT_PULLUP seeding as the full-size pushbutton — see comment
+    // in `register('pushbutton', ...)` above for why this is required.
+    if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, true);
 
     const onPress = () => {
       if (arduinoPin !== null) avrSimulator.setPinState(arduinoPin, false);

@@ -16,10 +16,13 @@ Two compilation modes:
 """
 import asyncio
 import base64
+import hashlib
+import json
 import logging
 import os
 import re
 import shutil
+import string
 import subprocess
 import tempfile
 import threading
@@ -166,7 +169,10 @@ def _run_with_streaming(
     )
 
 
-def _prepare_persistent_project_dir(idf_target: str) -> Path:
+def _prepare_persistent_project_dir(
+    idf_target: str,
+    options_hash: str = '',
+) -> Path:
     """Return the path to a per-target persistent project dir, materialising
     it from the template on first use and resetting the per-compile parts
     (main/, user_libs/) on every call so a previous sketch's files don't
@@ -174,6 +180,13 @@ def _prepare_persistent_project_dir(idf_target: str) -> Path:
 
     Keeps the `build/` directory intact across calls — that's where ninja's
     incremental cache + the .o files we want ccache to hit live.
+
+    `options_hash` (12-char prefix of sha256 over normalised board options)
+    is stored in a second sentinel `.options_hash`. When the hash changes
+    between compiles, build/ is wiped so cached .o files compiled against
+    the previous sdkconfig don't poison the new config. The wider target
+    dir is preserved (template files, idf version sentinel) so we only pay
+    the C/C++ recompile cost, not the template re-copy.
     """
     target_dir = _BUILD_ROOT / idf_target
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -190,6 +203,11 @@ def _prepare_persistent_project_dir(idf_target: str) -> Path:
         target_dir.mkdir(parents=True, exist_ok=True)
 
     project_dir = target_dir / 'project'
+    options_sentinel = target_dir / '.options_hash'
+    prior_options_hash = (
+        options_sentinel.read_text(encoding='utf-8').strip()
+        if options_sentinel.exists() else ''
+    )
 
     if not project_dir.exists():
         # First use of this target — full template copy.
@@ -203,7 +221,26 @@ def _prepare_persistent_project_dir(idf_target: str) -> Path:
         shutil.copytree(_TEMPLATE_DIR / 'main', project_dir / 'main')
         shutil.rmtree(project_dir / 'user_libs', ignore_errors=True)
 
+        if options_hash and options_hash != prior_options_hash:
+            # First compile after this feature shipped: prior_options_hash is
+            # empty but the persistent build/ was compiled against the old
+            # static sdkconfig. Wipe it once to force a clean reconfigure
+            # against the templated config — otherwise stale .o files
+            # silently mask the new options.
+            reason = (
+                'first compile post-upgrade'
+                if not prior_options_hash
+                else f'changed {prior_options_hash!r} -> {options_hash!r}'
+            )
+            logger.info(
+                f'[espidf] board options {reason}; '
+                f'wiping build/ to force a full reconfigure'
+            )
+            shutil.rmtree(project_dir / 'build', ignore_errors=True)
+
     sentinel.write_text(current_signature, encoding='utf-8')
+    if options_hash:
+        options_sentinel.write_text(options_hash, encoding='utf-8')
     return project_dir
 
 # Static IP that matches slirp DHCP range (first client = x.x.x.15)
@@ -916,9 +953,401 @@ class ESPIDFCompiler:
 
         return env
 
-    def _merge_flash_image(self, build_dir: Path, is_c3: bool) -> Path:
-        """Merge bootloader + partitions + app into 4MB flash image."""
-        FLASH_SIZE = 4 * 1024 * 1024
+    # ── Board options → sdkconfig / partition translation ───────────────
+    # Per-board ESP32 build options arrive as a loose dict from the
+    # frontend. _normalize_options validates the known keys and fills in
+    # defaults; _render_sdkconfig and _render_partition_csv then turn the
+    # normalised dict into the two files cmake reads at configure time.
+
+    # Schemes available in the UI. Each CSV is a verbatim copy of the
+    # arduino-esp32 partition table layout for that name. Keys must match
+    # ESP32PartitionScheme on the frontend.
+    _PARTITION_CSVS: dict[str, str] = {
+        # Velxio's historical default: single huge factory app, no OTA.
+        # Picking this as the fallback keeps pre-feature projects byte-for-byte
+        # compatible (compiled apps stayed under 3 MB).
+        'huge_app': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x300000,\n'
+            'spiffs,   data, spiffs,  0x310000,0xE0000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+        'default': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x140000,\n'
+            'app1,     app,  ota_1,   0x150000,0x140000,\n'
+            'spiffs,   data, spiffs,  0x290000,0x150000,\n'
+            'coredump, data, coredump,0x3E0000,0x10000,\n'
+        ),
+        'defaults_ffat': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x140000,\n'
+            'app1,     app,  ota_1,   0x150000,0x140000,\n'
+            'ffat,     data, fat,     0x290000,0x150000,\n'
+            'coredump, data, coredump,0x3E0000,0x10000,\n'
+        ),
+        'min_spiffs': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x1E0000,\n'
+            'app1,     app,  ota_1,   0x1F0000,0x1E0000,\n'
+            'spiffs,   data, spiffs,  0x3D0000,0x20000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+        'min_ffat': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x1E0000,\n'
+            'app1,     app,  ota_1,   0x1F0000,0x1E0000,\n'
+            'ffat,     data, fat,     0x3D0000,0x20000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+        'no_ota': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x200000,\n'
+            'spiffs,   data, spiffs,  0x210000,0x1E0000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+        'no_fs': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x1F0000,\n'
+            'app1,     app,  ota_1,   0x200000,0x1F0000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+        'large_spiffs': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x5000,\n'
+            'otadata,  data, ota,     0xe000,  0x2000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x1E0000,\n'
+            'spiffs,   data, spiffs,  0x1F0000,0x200000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+        'rainmaker': (
+            '# Name,   Type, SubType, Offset,  Size, Flags\n'
+            'nvs,      data, nvs,     0x9000,  0x4000,\n'
+            'otadata,  data, ota,     0xd000,  0x2000,\n'
+            'phy_init, data, phy,     0xf000,  0x1000,\n'
+            'app0,     app,  ota_0,   0x10000, 0x1E0000,\n'
+            'app1,     app,  ota_1,   0x1F0000,0x1E0000,\n'
+            'fctry,    data, nvs,     0x3D0000,0x6000,\n'
+            'coredump, data, coredump,0x3F0000,0x10000,\n'
+        ),
+    }
+
+    # Known option defaults — used to backfill missing keys so older clients
+    # (or callers without the feature wired up) still get a build.
+    _DEFAULT_OPTIONS: dict[str, str | int | bool] = {
+        'partitionScheme': 'huge_app',  # historical Velxio default
+        'cpuFreqMHz': 240,
+        'flashMode': 'dio',
+        'flashSize': '4MB',
+        'flashFreqMHz': '40',
+        'psram': 'disabled',
+        'coreDebugLevel': 'none',
+        'eraseFlashOnUpload': False,
+        'eventsRunOnCore': 1,
+        'arduinoRunsOnCore': 1,
+    }
+
+    _VALID_VALUES: dict[str, set] = {
+        'partitionScheme': set(_PARTITION_CSVS.keys()),
+        'cpuFreqMHz': {240, 160, 80, 40, 20, 10},
+        'flashMode': {'qio', 'dio', 'qout', 'dout'},
+        'flashSize': {'4MB', '8MB', '16MB'},
+        'flashFreqMHz': {'80', '40'},
+        'psram': {'disabled', 'enabled', 'opi'},
+        'coreDebugLevel': {'none', 'error', 'warn', 'info', 'debug', 'verbose'},
+        'eventsRunOnCore': {0, 1},
+        'arduinoRunsOnCore': {0, 1},
+    }
+
+    _DEBUG_LEVEL_NUMBER: dict[str, int] = {
+        'none': 0,
+        'error': 1,
+        'warn': 2,
+        'info': 3,
+        'debug': 4,
+        'verbose': 5,
+    }
+
+    _FLASH_SIZE_BYTES: dict[str, int] = {
+        '4MB': 4 * 1024 * 1024,
+        '8MB': 8 * 1024 * 1024,
+        '16MB': 16 * 1024 * 1024,
+    }
+
+    def _normalize_options(
+        self,
+        opts: dict | None,
+        idf_target: str,
+    ) -> dict:
+        """Fill missing keys with defaults, validate enums, strip
+        target-incompatible keys (e.g. PSRAM on C3).
+
+        Raises ValueError on an unknown enum value — caller turns this into
+        a user-visible compile error.
+        """
+        normalized: dict = {**self._DEFAULT_OPTIONS}
+        if opts:
+            for k, v in opts.items():
+                if k not in self._DEFAULT_OPTIONS:
+                    continue
+                if k in self._VALID_VALUES and v not in self._VALID_VALUES[k]:
+                    raise ValueError(
+                        f"Invalid board option {k}={v!r}; "
+                        f"expected one of {sorted(self._VALID_VALUES[k])}"
+                    )
+                normalized[k] = v
+
+        # ESP32-C3 has no external PSRAM controller — silently disable so
+        # a stale field from an upgraded project doesn't trip up the build.
+        if idf_target == 'esp32c3':
+            normalized['psram'] = 'disabled'
+
+        # OPI PSRAM (octal) is an S3-only mode. Downgrade to 'enabled' on
+        # classic Xtensa so users who switched boards mid-project don't get
+        # a stuck build.
+        if normalized['psram'] == 'opi' and idf_target != 'esp32s3':
+            normalized['psram'] = 'enabled'
+
+        return normalized
+
+    def _render_sdkconfig(self, normalized: dict, template_dir: Path) -> str:
+        """Render sdkconfig.defaults from the .in template + normalised opts."""
+        template_path = template_dir / 'sdkconfig.defaults.in'
+        template_text = template_path.read_text(encoding='utf-8')
+
+        # ── Flash mode (exactly one of QIO/DIO/QOUT/DOUT) ─────────────
+        flash_mode = normalized['flashMode']
+        flash_mode_lines = '\n'.join(
+            f'CONFIG_ESPTOOLPY_FLASHMODE_{m.upper()}={"y" if m == flash_mode else "n"}'
+            for m in ('qio', 'dio', 'qout', 'dout')
+        )
+
+        # ── Flash frequency ────────────────────────────────────────────
+        flash_freq = normalized['flashFreqMHz']
+        flash_freq_lines = '\n'.join(
+            f'CONFIG_ESPTOOLPY_FLASHFREQ_{f}M={"y" if f == flash_freq else "n"}'
+            for f in ('80', '40', '26', '20')
+        )
+
+        # ── Flash size ─────────────────────────────────────────────────
+        flash_size = normalized['flashSize']
+        flash_size_lines_list = [
+            f'CONFIG_ESPTOOLPY_FLASHSIZE_{s}={"y" if s == flash_size else "n"}'
+            for s in ('2MB', '4MB', '8MB', '16MB')
+        ]
+        flash_size_lines_list.append(f'CONFIG_ESPTOOLPY_FLASHSIZE="{flash_size}"')
+        flash_size_lines = '\n'.join(flash_size_lines_list)
+
+        # ── CPU frequency ──────────────────────────────────────────────
+        cpu_freq = int(normalized['cpuFreqMHz'])
+        cpu_lines = [
+            f'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_{f}='
+            f'{"y" if f == cpu_freq else "n"}'
+            for f in (240, 160, 80, 40)
+        ]
+        cpu_lines.append(f'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ={cpu_freq}')
+        cpu_freq_lines = '\n'.join(cpu_lines)
+
+        # ── PSRAM ──────────────────────────────────────────────────────
+        psram_mode = normalized['psram']
+        psram_chunks: list[str] = []
+        if psram_mode == 'disabled':
+            psram_chunks.append('CONFIG_SPIRAM=n')
+        else:
+            psram_chunks.append('CONFIG_SPIRAM=y')
+            psram_chunks.append('CONFIG_SPIRAM_USE_MALLOC=y')
+            psram_chunks.append('CONFIG_SPIRAM_SPEED_80M=y')
+            if psram_mode == 'opi':
+                psram_chunks.append('CONFIG_SPIRAM_MODE_OCT=y')
+            else:
+                psram_chunks.append('CONFIG_SPIRAM_MODE_QUAD=y')
+        psram_lines = '\n'.join(psram_chunks)
+
+        substitutions = {
+            'FLASH_MODE_LINES': flash_mode_lines,
+            'FLASH_FREQ_LINES': flash_freq_lines,
+            'FLASH_SIZE_LINES': flash_size_lines,
+            'CPU_FREQ_LINES': cpu_freq_lines,
+            'PSRAM_LINES': psram_lines,
+            'ARDUHAL_LOG_LEVEL': str(
+                self._DEBUG_LEVEL_NUMBER[normalized['coreDebugLevel']]
+            ),
+            'ARDUINO_RUNNING_CORE': str(normalized['arduinoRunsOnCore']),
+            'ARDUINO_EVENT_RUNNING_CORE': str(normalized['eventsRunOnCore']),
+        }
+
+        return string.Template(template_text).safe_substitute(substitutions)
+
+    def _render_partition_csv(self, scheme: str) -> str:
+        """Return the partition table CSV for the given scheme name."""
+        csv = self._PARTITION_CSVS.get(scheme)
+        if csv is None:
+            # Unknown scheme — should not happen because _normalize_options
+            # validates, but fall back to the historical layout so the build
+            # still succeeds rather than crashing.
+            logger.warning(f'[espidf] Unknown partition scheme {scheme!r}, using huge_app')
+            csv = self._PARTITION_CSVS['huge_app']
+        return csv
+
+    @staticmethod
+    def _parse_partition_csv(csv_text: str) -> list[dict]:
+        """Parse a partition table CSV into a list of dicts. Handles the
+        comma-separated arduino-esp32 format with arbitrary whitespace.
+        """
+        entries: list[dict] = []
+        for line in csv_text.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            cols = [c.strip() for c in line.split(',')]
+            if len(cols) < 5:
+                continue
+            try:
+                offset = int(cols[3], 16) if cols[3] else 0
+                size = int(cols[4], 16) if cols[4] else 0
+            except ValueError:
+                continue
+            entries.append({
+                'name': cols[0],
+                'type': cols[1],
+                'subtype': cols[2],
+                'offset': offset,
+                'size': size,
+            })
+        return entries
+
+    def _find_filesystem_partition(self, csv_text: str) -> Optional[dict]:
+        """Return the SPIFFS or FATFS partition entry, or None."""
+        for e in self._parse_partition_csv(csv_text):
+            if e['type'] == 'data' and e['subtype'] in ('spiffs', 'fat'):
+                return e
+        return None
+
+    def _locate_mkspiffs(self) -> Optional[str]:
+        """Find the mkspiffs binary. Returns None when unavailable so the
+        build can proceed (with an empty FS partition).
+
+        Search order:
+          1. $MKSPIFFS_PATH (explicit override)
+          2. $IDF_TOOLS_PATH/tools/mkspiffs/*/mkspiffs/mkspiffs[.exe]
+          3. shutil.which('mkspiffs')
+        """
+        override = os.environ.get('MKSPIFFS_PATH')
+        if override and os.path.isfile(override):
+            return override
+
+        idf_tools = os.environ.get('IDF_TOOLS_PATH')
+        if idf_tools:
+            for sub in Path(idf_tools, 'tools', 'mkspiffs').glob('*/mkspiffs/mkspiffs*'):
+                if sub.is_file():
+                    return str(sub)
+
+        found = shutil.which('mkspiffs')
+        if found:
+            return found
+
+        return None
+
+    def _build_spiffs_image(
+        self,
+        project_dir: Path,
+        spiffs_files: list[dict],
+        partition_size_bytes: int,
+    ) -> Optional[Path]:
+        """Materialise uploaded files into a SPIFFS partition image.
+
+        Returns the path to spiffs.bin, or None if mkspiffs is unavailable
+        / the file set is empty. The caller places the bin at the SPIFFS
+        offset (looked up from partitions.csv) when merging the flash image.
+
+        Raises ValueError when the inputs are oversized — the route layer
+        turns this into a 4xx-shaped CompileResponse for the UI.
+        """
+        if not spiffs_files:
+            return None
+        if partition_size_bytes <= 0:
+            raise ValueError(
+                'Selected partition scheme has no SPIFFS/FATFS region — '
+                'remove the uploaded files or pick a scheme with a filesystem.'
+            )
+
+        mkspiffs = self._locate_mkspiffs()
+        if mkspiffs is None:
+            logger.warning(
+                '[espidf] mkspiffs not found — uploaded SPIFFS files will be '
+                'ignored at flash time. Set MKSPIFFS_PATH or install mkspiffs '
+                'into IDF_TOOLS_PATH.'
+            )
+            return None
+
+        spiffs_data_dir = project_dir / 'spiffs_data'
+        if spiffs_data_dir.exists():
+            shutil.rmtree(spiffs_data_dir)
+        spiffs_data_dir.mkdir(parents=True)
+
+        total_bytes = 0
+        for entry in spiffs_files:
+            name = entry['name']
+            data = base64.b64decode(entry['content_b64'])
+            total_bytes += len(data)
+            # mkspiffs uses the on-disk filename as the in-flash path so
+            # write subdirs literally rather than smuggling slashes into
+            # the name. Strip any leading slash to avoid escaping the dir.
+            safe_path = name.lstrip('/').lstrip('\\')
+            dest = spiffs_data_dir / safe_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+
+        # Block size 4096, page size 256 — matches the arduino-esp32
+        # defaults so the in-flash image is readable by SPIFFS.begin().
+        spiffs_bin = project_dir / 'spiffs.bin'
+        cmd = [
+            mkspiffs,
+            '-c', str(spiffs_data_dir),
+            '-b', '4096',
+            '-p', '256',
+            '-s', str(partition_size_bytes),
+            str(spiffs_bin),
+        ]
+        logger.info(
+            f'[espidf] mkspiffs: {len(spiffs_files)} files, '
+            f'{total_bytes} bytes payload, {partition_size_bytes} byte partition'
+        )
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            raise ValueError(
+                f'mkspiffs failed (rc={result.returncode}): '
+                f'{result.stderr.strip() or result.stdout.strip()}'
+            )
+
+        return spiffs_bin
+
+    def _merge_flash_image(
+        self,
+        build_dir: Path,
+        is_c3: bool,
+        flash_size_bytes: int = 4 * 1024 * 1024,
+        spiffs_bin: Optional[Path] = None,
+        spiffs_offset: int = 0,
+    ) -> Path:
+        """Merge bootloader + partitions + app (+ optional SPIFFS) into a
+        flash image sized to match the user's Flash Size option."""
+        FLASH_SIZE = flash_size_bytes
         flash = bytearray(b'\xff' * FLASH_SIZE)
 
         bootloader_offset = 0x0000 if is_c3 else 0x1000
@@ -949,12 +1378,23 @@ class ESPIDFCompiler:
             raise FileNotFoundError(f'Missing binaries for merge: {missing}')
 
         last_used = 0
-        for offset, path in [
+        placements: list[tuple[int, Path]] = [
             (bootloader_offset, bootloader),
             (0x8000, partitions),
             (0x10000, app),
-        ]:
+        ]
+        if spiffs_bin is not None and spiffs_offset > 0:
+            placements.append((spiffs_offset, spiffs_bin))
+
+        for offset, path in placements:
             data = path.read_bytes()
+            if offset + len(data) > FLASH_SIZE:
+                raise ValueError(
+                    f'Partition {path.name} ({len(data)} bytes at 0x{offset:X}) '
+                    f'overflows the selected flash size ({FLASH_SIZE} bytes). '
+                    f'Pick a larger Flash Size or a partition scheme with a '
+                    f'smaller app/data region.'
+                )
             flash[offset:offset + len(data)] = data
             last_used = max(last_used, offset + len(data))
             logger.info(f'[espidf] Placed {path.name} at 0x{offset:04X} ({len(data)} bytes)')
@@ -981,6 +1421,8 @@ class ESPIDFCompiler:
         files: list[dict],
         board_fqbn: str,
         progress_callback: Optional[ProgressCallback] = None,
+        board_options: dict | None = None,
+        spiffs_files: list[dict] | None = None,
     ) -> dict:
         """
         Compile Arduino sketch using ESP-IDF.
@@ -1004,6 +1446,15 @@ class ESPIDFCompiler:
         thread for every stdout/stderr line as cmake and ninja run. Used
         by the async compile path to expose live build output to clients
         polling /api/compile/status/{job_id}.
+
+        board_options (optional): per-board ESP32 build options from the
+        UI (Partition Scheme, CPU Frequency, Flash Mode, PSRAM, etc.).
+        Missing keys fall back to historical defaults so AVR/RP2040 callers
+        and pre-feature clients still get a working build. Note that
+        SPIFFS files are NOT folded into the cache-invalidation hash —
+        only sdkconfig-affecting options are — because the SPIFFS image is
+        rebuilt on every compile anyway and folding it in would burn the
+        C/C++ ninja cache on every file edit.
         """
         if not self.available:
             return {
@@ -1019,11 +1470,26 @@ class ESPIDFCompiler:
         logger.info(f'[espidf] Compiling for {idf_target} (FQBN: {board_fqbn})')
         logger.info(f'[espidf] Files: {[f["name"] for f in files]}')
 
+        try:
+            normalized_opts = self._normalize_options(board_options, idf_target)
+        except ValueError as exc:
+            return {
+                'success': False,
+                'error': str(exc),
+                'stdout': '',
+                'stderr': '',
+            }
+
+        options_hash = hashlib.sha256(
+            json.dumps(normalized_opts, sort_keys=True).encode()
+        ).hexdigest()[:12]
+
         if _USE_PERSISTENT_DIR:
-            project_dir = _prepare_persistent_project_dir(idf_target)
+            project_dir = _prepare_persistent_project_dir(idf_target, options_hash)
             logger.info(f'[espidf] Using persistent build dir: {project_dir}')
             return await self._compile_in_dir(
-                project_dir, files, idf_target, is_c3, progress_callback,
+                project_dir, files, idf_target, is_c3,
+                progress_callback, normalized_opts, spiffs_files,
             )
 
         with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
@@ -1031,7 +1497,8 @@ class ESPIDFCompiler:
             shutil.copytree(_TEMPLATE_DIR, project_dir)
             logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
             return await self._compile_in_dir(
-                project_dir, files, idf_target, is_c3, progress_callback,
+                project_dir, files, idf_target, is_c3,
+                progress_callback, normalized_opts, spiffs_files,
             )
 
     async def _compile_in_dir(
@@ -1041,12 +1508,32 @@ class ESPIDFCompiler:
         idf_target: str,
         is_c3: bool,
         progress_callback: Optional[ProgressCallback] = None,
+        board_options: dict | None = None,
+        spiffs_files: list[dict] | None = None,
     ) -> dict:
         """Inner compile body: writes sketch + libs into `project_dir`,
         runs cmake + ninja, merges binaries. Caller is responsible for
         creating `project_dir` (with the template tree already copied in)
         and for managing its lifecycle (persistent vs tempfile).
         """
+        # board_options is already normalised by compile() — defensive in
+        # case _compile_in_dir is called directly from a test path.
+        if board_options is None:
+            board_options = self._normalize_options(None, idf_target)
+
+        # Render sdkconfig.defaults from the templated .in file using the
+        # user's options. Overwrites the static file copied from the
+        # template tree. Doing this BEFORE cmake configure means the new
+        # CONFIG_* lines reach kconfig on its first read.
+        rendered_sdkconfig = self._render_sdkconfig(board_options, _TEMPLATE_DIR)
+        (project_dir / 'sdkconfig.defaults').write_text(
+            rendered_sdkconfig, encoding='utf-8',
+        )
+
+        # Generate partitions.csv per the selected scheme.
+        partition_csv = self._render_partition_csv(board_options['partitionScheme'])
+        (project_dir / 'partitions.csv').write_text(partition_csv, encoding='utf-8')
+
         # Get sketch content
         main_content = ''
         for f in files:
@@ -1309,13 +1796,51 @@ class ESPIDFCompiler:
                 'stderr': combined_stderr,
             }
 
-        # Step 3: Merge binaries into flash image
+        # Step 3: Build the SPIFFS partition image (if files were uploaded
+        # and the partition scheme has a filesystem region). Skipped silently
+        # when mkspiffs isn't installed — see _build_spiffs_image.
+        flash_size_bytes = self._FLASH_SIZE_BYTES.get(
+            board_options['flashSize'], 4 * 1024 * 1024,
+        )
+        fs_partition = self._find_filesystem_partition(partition_csv)
+        spiffs_bin: Optional[Path] = None
+        spiffs_offset = 0
+        if spiffs_files:
+            try:
+                spiffs_bin = self._build_spiffs_image(
+                    project_dir,
+                    spiffs_files,
+                    fs_partition['size'] if fs_partition else 0,
+                )
+            except ValueError as exc:
+                return {
+                    'success': False,
+                    'error': str(exc),
+                    'stdout': all_stdout,
+                    'stderr': all_stderr,
+                }
+            if spiffs_bin is not None and fs_partition is not None:
+                spiffs_offset = fs_partition['offset']
+
+        # Step 4: Merge binaries into flash image
         try:
-            merged_path = self._merge_flash_image(build_dir, is_c3)
+            merged_path = self._merge_flash_image(
+                build_dir, is_c3,
+                flash_size_bytes=flash_size_bytes,
+                spiffs_bin=spiffs_bin,
+                spiffs_offset=spiffs_offset,
+            )
         except FileNotFoundError as exc:
             return {
                 'success': False,
                 'error': f'Binary merge failed: {exc}',
+                'stdout': all_stdout,
+                'stderr': all_stderr,
+            }
+        except ValueError as exc:
+            return {
+                'success': False,
+                'error': str(exc),
                 'stdout': all_stdout,
                 'stderr': all_stderr,
             }

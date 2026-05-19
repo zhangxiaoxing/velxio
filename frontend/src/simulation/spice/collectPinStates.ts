@@ -66,32 +66,32 @@ export function collectPinStates(
     if (w.end.componentId === boardId) pinNames.add(w.end.pinName);
   }
 
+  const outputPins = pm.getOutputPins();
+
   for (const pinName of pinNames) {
     const arduinoPin = pinNameToArduinoPin(pinName, boardKind);
     if (arduinoPin < 0) continue;
     const pwmDuty = pm.getPwmValue(arduinoPin);
     if (pwmDuty > 0) {
       result[pinName] = { type: 'pwm', duty: pwmDuty };
-    } else {
-      // ALWAYS emit a digital source — even when the pin is currently
-      // LOW. NetlistBuilder turns this into a `V_<board>_<pin>` card,
-      // and MixedModeScheduler.onMcuPinChange later calls
-      // `alterSource('V_<board>_<pin>', vcc | 0)` on every MCU edge.
-      // If the V-source isn't in the netlist (because we skipped it
-      // here while LOW), the alter is a silent no-op against a name
-      // that doesn't exist; the LED then never lights up no matter
-      // how many times the sketch toggles the pin afterwards.
-      //
-      // This was the root cause of the reported "sometimes the LED
-      // works after Run, sometimes it doesn't" symptom. The behaviour
-      // was deterministic but appeared random because it depended on
-      // whether the AVR happened to be in the HIGH half of its blink
-      // cycle at the moment runSolve() captured pin states.
+      continue;
+    }
+    if (outputPins.has(arduinoPin)) {
+      // The MCU has actually driven this pin at least once
+      // (digitalWrite / PWM / port-listener fire), so emit a V-source
+      // for NetlistBuilder.  MixedModeScheduler.onMcuPinChange will
+      // alterSource() on each subsequent edge; the V-source needs to
+      // exist in the netlist for the alter to bind (otherwise it's a
+      // silent no-op and the LED never updates).
       result[pinName] = {
         type: 'digital',
         v: pm.getPinState(arduinoPin) ? vcc : 0,
       };
     }
+    // else: leave the net free — external components (sensor divider,
+    // pull-up, button, etc.) drive the SPICE node.  Without this guard,
+    // an unconditional V-source at 0 V would short-circuit any analog
+    // sensor on the pin and analogRead() would always return 0.
   }
   return result;
 }

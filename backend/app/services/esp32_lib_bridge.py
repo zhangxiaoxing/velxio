@@ -162,7 +162,15 @@ class Esp32LibBridge:
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def start(self, firmware_b64: str, machine: str = 'esp32-picsimlab') -> None:
-        """Decode firmware, init QEMU, start event loop in daemon thread."""
+        """Decode firmware, init QEMU, start event loop in daemon thread.
+
+        Note on the user-visible "Erase Flash on Upload" board option (#161):
+        every call here writes a fresh MTD image from the supplied firmware
+        bytes — flash is NOT persisted across stop/start, so the option is
+        effectively always-on for QEMU. The toggle remains in the UI for
+        parity with the Arduino IDE menu and as a forward hook for if/when
+        we add a persistent-NVS feature.
+        """
         from app.services.esp32_flash_image import pad_to_flash_size
         # The compiler trims trailing 0xFF padding before serializing (issue
         # #101 — full 4 MB images blew nginx buffers). Re-pad here so QEMU's

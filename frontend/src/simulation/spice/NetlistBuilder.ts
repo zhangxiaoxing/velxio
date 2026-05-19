@@ -30,6 +30,21 @@ function skipCanonicalization(metadataId: string): boolean {
   return metadataId.startsWith('instr-');
 }
 
+/**
+ * Sanitize a component / board / pin id for use inside a SPICE identifier
+ * (V-source name, etc.). ngspice's interactive `alter` command treats `-`
+ * as an arithmetic / range operator and silently no-ops on hyphenated
+ * source names — so even though the netlist *parser* tolerates hyphens
+ * via the regex on line 206, mid-simulation MCU pin transitions stop
+ * propagating after the first solve. Substituting `-` → `_` here keeps
+ * the identifier ngspice-safe AND consistent with whatever the scheduler
+ * passes to `alter`. Must be reused by MixedModeScheduler when building
+ * the alter target name.
+ */
+export function sanitizeSpiceId(id: string): string {
+  return id.replace(/-/g, '_');
+}
+
 export interface BuildNetlistResult {
   netlist: string;
   /** "boardId:pinName" → SPICE net name, from the same UF used to build the netlist. */
@@ -81,6 +96,18 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     for (const pinName of board.vccPinNames ?? []) {
       uf.setCanonical(pinKey(board.id, pinName), 'vcc_rail');
     }
+    // Fallback: any board pin a wire references whose name looks like a
+    // ground pin (GND, GND.1, GND.9, etc.) is canonicalized to "0" even if
+    // it's not in `groundPinNames`. Boards with many GND pins (ESP32-C3
+    // dev kits ship up to 10) often miss some in the per-board list, which
+    // would leave wires connected to those pins floating instead of grounded.
+    for (const pinName of pinsReferencedByWires(board.id, wires)) {
+      if (GROUND_PIN_RE.test(pinName)) {
+        uf.setCanonical(pinKey(board.id, pinName), '0');
+      } else if (VCC_PIN_RE.test(pinName)) {
+        uf.setCanonical(pinKey(board.id, pinName), 'vcc_rail');
+      }
+    }
   }
   for (const comp of components) {
     if (skipCanonicalization(comp.metadataId)) continue;
@@ -117,6 +144,14 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   }
 
   // ── 5. Board GPIO sources ─────────────────────────────────────────────────
+  // Hyphens are kept in the V-source name (NetlistBuilder regex on line 206
+  // captures `[_\w-]*`), so ngspice itself can parse + load the source and
+  // expose the branch current as `v_<board>-<pin>#branch` — visible in the
+  // canvas voltmeters / branch-current map. BUT ngspice's *interactive*
+  // `alter` command treats `-` as an operator and silently no-ops on
+  // hyphenated source names — making MCU pin transitions stop propagating
+  // after the very first solve. So MixedModeScheduler.onMcuPinChange must
+  // build the same sanitized name we emit here. See sanitizeSpiceId().
   for (const board of boards) {
     for (const [pinName, state] of Object.entries(board.pins)) {
       if (state.type === 'input') continue; // don't drive the pin
@@ -124,7 +159,7 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
       if (!net) continue;
       if (net === '0' || net === 'vcc_rail') continue; // already served
       const v = state.type === 'digital' ? state.v : state.duty * board.vcc;
-      cards.push(`V_${board.id}_${pinName} ${net} 0 DC ${v}`);
+      cards.push(`V_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)} ${net} 0 DC ${v}`);
     }
   }
 

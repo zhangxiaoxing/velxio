@@ -74,6 +74,12 @@ export interface BoardInstance {
   hasWifi?: boolean; // set by compiler — true when sketch uses WiFi
   wifiStatus?: WifiStatus;
   bleStatus?: BleStatus;
+  // ESP32-only — populated when the user opens Board Options... on the
+  // canvas context menu. Undefined for AVR / RP2040 / Pi3 and for
+  // pre-feature saved projects (compiler falls back to defaults).
+  // Types live in `./boardOptions` to avoid a circular import.
+  boardOptions?: import('./boardOptions').ESP32BoardOptions;
+  spiffsFiles?: import('./boardOptions').SpiffsFile[];
 }
 
 export const BOARD_KIND_LABELS: Record<BoardKind, string> = {
@@ -123,5 +129,5 @@ export const BOARD_KIND_FQBN: Record<BoardKind, string | null> = {
   'esp32-c3': 'esp32:esp32:esp32c3',
   'xiao-esp32-c3': 'esp32:esp32:XIAO_ESP32C3',
   'aitewinrobot-esp32c3-supermini': 'esp32:esp32:esp32c3',
-  attiny85: 'ATTinyCore:avr:attinyx5:chip=85,clock=internal16mhz',
+  attiny85: 'ATTinyCore:avr:attinyx5:chip=85,clock=16pll',
 };

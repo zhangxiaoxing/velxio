@@ -1,10 +1,22 @@
 import axios from 'axios';
+import type { ESP32BoardOptions, SpiffsFile } from '../types/boardOptions';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 export interface SketchFile {
   name: string;
   content: string;
+}
+
+/**
+ * Per-board build options forwarded to the backend. Only meaningful for
+ * ESP32 targets — `board_options` is structurally translated into sdkconfig
+ * knobs and a generated partitions.csv by the ESP-IDF compiler. `spiffs_files`
+ * (if non-empty) are baked into a SPIFFS partition image via `mkspiffs`.
+ */
+export interface CompileExtras {
+  boardOptions?: ESP32BoardOptions;
+  spiffsFiles?: SpiffsFile[];
 }
 
 export interface CompileResult {
@@ -68,6 +80,7 @@ export async function compileCode(
   board: string = 'arduino:avr:uno',
   projectId?: string | null,
   onProgress?: CompileProgress,
+  extras?: CompileExtras,
 ): Promise<CompileResult> {
   console.log('Sending compilation request to:', `${API_BASE}/compile/start`);
   console.log('Board:', board);
@@ -76,11 +89,25 @@ export async function compileCode(
     files.map((f) => f.name),
   );
 
+  // Translate camelCase frontend keys to snake_case backend keys. Backend
+  // only inspects these fields for esp32:* FQBNs — other boards pass them
+  // through unread.
+  const board_options = extras?.boardOptions ? { ...extras.boardOptions } : null;
+  const spiffs_files = extras?.spiffsFiles?.length
+    ? extras.spiffsFiles.map((f) => ({ name: f.name, content_b64: f.contentB64 }))
+    : null;
+
   let jobId: string;
   try {
     const startResp = await axios.post<CompileStartResponse>(
       `${API_BASE}/compile/start`,
-      { files, board_fqbn: board, project_id: projectId ?? null },
+      {
+        files,
+        board_fqbn: board,
+        project_id: projectId ?? null,
+        board_options,
+        spiffs_files,
+      },
       { withCredentials: true, timeout: 30000 },
     );
     jobId = startResp.data.job_id;

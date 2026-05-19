@@ -26,7 +26,8 @@
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
     "tsc": "tsc -b",
-    "test:libraries": "RUN_LIBRARY_TESTS=1 vitest run src/__tests__/library-compile.integration.test.ts"
+    "test:libraries": "RUN_LIBRARY_TESTS=1 vitest run src/__tests__/library-compile.integration.test.ts",
+    "test:visual": "node ../scripts/visual-led-test.mjs"
   },
   "dependencies": {
     "@google/genai": "^0.6.0",

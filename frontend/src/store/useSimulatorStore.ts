@@ -969,7 +969,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onSerialData = serialCallback;
         bridge.onPinChange = (gpioPin, state) => {
           const boardPm = pinManagerMap.get(id);
-          if (boardPm) boardPm.triggerPinChange(gpioPin, state);
+          if (boardPm) boardPm.triggerPinChange(gpioPin, state, 'mcu');
         };
         bridge.onCrash = () => {
           set({ esp32CrashBoardId: id });
@@ -1536,6 +1536,11 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         getBoardSimulator(boardId)?.stop();
       }
 
+      // Drop MCU-output classification so the next Run starts clean and
+      // collectPinStates doesn't emit stale V-sources before the new
+      // firmware has driven any pins.
+      getBoardPinManager(boardId)?.resetPinStates();
+
       set((s) => {
         const boards = s.boards.map((b) => (b.id === boardId ? { ...b, running: false } : b));
         const isActive = s.activeBoardId === boardId;
@@ -1558,6 +1563,9 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         const sim = getBoardSimulator(boardId);
         if (sim) {
           sim.reset();
+          // Drop MCU-output classification so the new program starts
+          // clean — no stale V-sources from the previous run.
+          getBoardPinManager(boardId)?.resetPinStates();
           // Re-wire serial callback after reset
           sim.onSerialData = (ch) => appendSerial(boardId, ch);
           if (sim instanceof AVRSimulator) {
@@ -1624,7 +1632,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onSerialData = serialCallback;
         bridge.onPinChange = (gpioPin, state) => {
           const boardPm = pinManagerMap.get(boardId);
-          if (boardPm) boardPm.triggerPinChange(gpioPin, state);
+          if (boardPm) boardPm.triggerPinChange(gpioPin, state, 'mcu');
         };
         bridge.onCrash = () => {
           set({ esp32CrashBoardId: boardId });
@@ -1726,7 +1734,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
         bridge.onSerialData = serialCallback;
         bridge.onPinChange = (gpioPin, state) => {
           const boardPm = pinManagerMap.get(boardId);
-          if (boardPm) boardPm.triggerPinChange(gpioPin, state);
+          if (boardPm) boardPm.triggerPinChange(gpioPin, state, 'mcu');
         };
         bridge.onCrash = () => {
           set({ esp32CrashBoardId: boardId });

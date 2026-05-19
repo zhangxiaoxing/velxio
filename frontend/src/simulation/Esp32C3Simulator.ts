@@ -298,7 +298,7 @@ export class Esp32C3Simulator {
                 `[ESP32-C3] GPIO${bit} → ${state ? 'HIGH' : 'LOW'} @ ${timeMs.toFixed(1)}ms`,
               );
               this.onPinChangeWithTime?.(bit, state, timeMs);
-              this.pinManager.setPinState(bit, state);
+              this.pinManager.setPinState(bit, state, 'mcu');
             }
           }
         }

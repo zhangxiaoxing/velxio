@@ -427,6 +427,14 @@ export class AVRSimulator {
     if (!this.cpu) return;
     console.log('Setting up pin hooks...');
 
+    // DDR register addresses (used to distinguish OUTPUT pins from
+    // INPUT_PULLUP — see PinManager.updatePort ddrMask param).
+    //   ATmega328P/Uno/Nano: DDRB=0x24, DDRC=0x27, DDRD=0x2A
+    //   ATtiny85:            DDRB=0x37
+    //   ATmega2560: per-port table below
+    const cpu = this.cpu;
+    const readDdr = (addr: number) => cpu.data[addr] ?? 0;
+
     if (this.boardVariant === 'tiny85') {
       // ATtiny85: PORTB only, PB0-PB5 → pins 0-5
       // Must pass an explicit pinMap so updatePort uses offset 0 instead of the
@@ -434,20 +442,26 @@ export class AVRSimulator {
       const TINY85_PIN_MAP = [0, 1, 2, 3, 4, 5, -1, -1];
       this.portB!.addListener((value) => {
         if (value !== this.lastPortBValue) {
-          this.pinManager.updatePort('PORTB', value, this.lastPortBValue, TINY85_PIN_MAP);
+          this.pinManager.updatePort('PORTB', value, this.lastPortBValue, TINY85_PIN_MAP, readDdr(0x37));
           this.firePinChangeWithTime(value, this.lastPortBValue, null, 0);
           this.lastPortBValue = value;
         }
       });
     } else if (this.boardVariant === 'mega') {
       // Mega: use explicit per-bit pin maps for all 11 ports
+      const MEGA_DDR_ADDRS: Record<string, number> = {
+        PORTA: 0x21, PORTB: 0x24, PORTC: 0x27, PORTD: 0x2A,
+        PORTE: 0x2D, PORTF: 0x30, PORTG: 0x33, PORTH: 0x101,
+        PORTJ: 0x104, PORTK: 0x107, PORTL: 0x10A,
+      };
       for (const [portName, port] of this.megaPorts) {
         const pinMap = MEGA_PORT_BIT_MAP[portName];
+        const ddrAddr = MEGA_DDR_ADDRS[portName];
         this.megaPortValues.set(portName, 0);
         port.addListener((value) => {
           const old = this.megaPortValues.get(portName) ?? 0;
           if (value !== old) {
-            this.pinManager.updatePort(portName, value, old, pinMap);
+            this.pinManager.updatePort(portName, value, old, pinMap, ddrAddr ? readDdr(ddrAddr) : undefined);
             this.firePinChangeWithTime(value, old, pinMap);
             this.megaPortValues.set(portName, value);
           }
@@ -457,21 +471,21 @@ export class AVRSimulator {
       // Uno / Nano: simple 3-port setup
       this.portB!.addListener((value) => {
         if (value !== this.lastPortBValue) {
-          this.pinManager.updatePort('PORTB', value, this.lastPortBValue);
+          this.pinManager.updatePort('PORTB', value, this.lastPortBValue, undefined, readDdr(0x24));
           this.firePinChangeWithTime(value, this.lastPortBValue, null, 8);
           this.lastPortBValue = value;
         }
       });
       this.portC!.addListener((value) => {
         if (value !== this.lastPortCValue) {
-          this.pinManager.updatePort('PORTC', value, this.lastPortCValue);
+          this.pinManager.updatePort('PORTC', value, this.lastPortCValue, undefined, readDdr(0x27));
           this.firePinChangeWithTime(value, this.lastPortCValue, null, 14);
           this.lastPortCValue = value;
         }
       });
       this.portD!.addListener((value) => {
         if (value !== this.lastPortDValue) {
-          this.pinManager.updatePort('PORTD', value, this.lastPortDValue);
+          this.pinManager.updatePort('PORTD', value, this.lastPortDValue, undefined, readDdr(0x2A));
           this.firePinChangeWithTime(value, this.lastPortDValue, null, 0);
           this.lastPortDValue = value;
         }

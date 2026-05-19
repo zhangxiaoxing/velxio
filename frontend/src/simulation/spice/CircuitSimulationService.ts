@@ -26,7 +26,7 @@
  *   - No SPICE-engine knowledge — that's in the adapters.
  */
 import { buildInputFromStore } from './storeAdapter';
-import { buildNetlist } from './NetlistBuilder';
+import { buildNetlist, sanitizeSpiceId } from './NetlistBuilder';
 import type { TimeWaveforms } from './types';
 
 /** What the service needs from the simulator store. */
@@ -106,8 +106,15 @@ export interface ServiceOptions {
 export class CircuitSimulationService {
   private inFlight = false;
   private pending = false;
-  private pendingMcuEdge: { boardId: string; pinName: string; state: boolean; vcc: number } | null =
-    null;
+  // Per-pin pending edge buffer. Keyed by `${boardId}|${pinName}`. A single
+  // slot would be overwritten when several pins toggle during the same
+  // in-flight tick (Traffic Light: red→yellow→green hand off within ~µs of
+  // each other) — the LATEST edge would win, dropping the rest. With a Map
+  // every pin's most-recent edge is preserved and replayed after the tick.
+  private pendingMcuEdges = new Map<
+    string,
+    { boardId: string; pinName: string; state: boolean; vcc: number }
+  >();
 
   /**
    * Last loaded circuit context — used by `handleMcuEdge` to extract
@@ -145,10 +152,12 @@ export class CircuitSimulationService {
       if (this.pending) {
         this.pending = false;
         void this.tick();
-      } else if (this.pendingMcuEdge) {
-        const edge = this.pendingMcuEdge;
-        this.pendingMcuEdge = null;
-        void this.handleMcuEdge(edge.boardId, edge.pinName, edge.state, edge.vcc);
+      } else if (this.pendingMcuEdges.size > 0) {
+        const edges = Array.from(this.pendingMcuEdges.values());
+        this.pendingMcuEdges.clear();
+        for (const edge of edges) {
+          void this.handleMcuEdge(edge.boardId, edge.pinName, edge.state, edge.vcc);
+        }
       }
     }
   }
@@ -160,18 +169,34 @@ export class CircuitSimulationService {
    * voltages to useElectricalStore.
    *
    * Coalesces with the canvas-change tick: if a full solve is in
-   * flight, the edge is queued and replayed after that solve
-   * completes (so the netlist is fresh).  Last-edge-wins per pin
-   * since edges overwrite the same field.
+   * flight, the edge is queued per-pin (Map keyed by `boardId|pinName`)
+   * and replayed after the tick completes — last-state-wins PER pin,
+   * so different pins toggling during the same tick don't drop each
+   * other's edges.
    */
   async handleMcuEdge(boardId: string, pinName: string, state: boolean, vcc: number): Promise<void> {
+    const pinKey = `${boardId}|${pinName}`;
     if (this.inFlight) {
-      this.pendingMcuEdge = { boardId, pinName, state, vcc };
+      this.pendingMcuEdges.set(pinKey, { boardId, pinName, state, vcc });
       return;
     }
     if (!this.loadedContext) {
       // No circuit loaded yet — kick a full tick.  The edge will
       // appear in board.pinStates during runSolve.
+      void this.tick();
+      return;
+    }
+    // Self-heal: if this is the FIRST edge on a pin that wasn't classified
+    // as MCU-output when the netlist was built, the matching V-source
+    // doesn't exist — alterSource would be a silent no-op.  Trigger a
+    // full rebuild instead; collectPinStates now sees the pin in
+    // outputPins and emits the V-source, so the next edge alters normally.
+    const expected = `v_${sanitizeSpiceId(boardId)}_${sanitizeSpiceId(pinName)}`.toLowerCase();
+    const hasSource = this.loadedContext.voltageSources.some(
+      (vs) => vs.toLowerCase() === expected,
+    );
+    if (!hasSource) {
+      this.pendingMcuEdges.set(pinKey, { boardId, pinName, state, vcc });
       void this.tick();
       return;
     }
@@ -189,6 +214,12 @@ export class CircuitSimulationService {
       if (this.pending) {
         this.pending = false;
         void this.tick();
+      } else if (this.pendingMcuEdges.size > 0) {
+        const edges = Array.from(this.pendingMcuEdges.values());
+        this.pendingMcuEdges.clear();
+        for (const edge of edges) {
+          void this.handleMcuEdge(edge.boardId, edge.pinName, edge.state, edge.vcc);
+        }
       }
     }
   }

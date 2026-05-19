@@ -50,12 +50,20 @@ def _target_lock(board_fqbn: str) -> asyncio.Lock:
     return lock
 
 
-def _job_key(files: list[dict[str, str]], board_fqbn: str) -> str:
-    """Stable content hash of (files, board) used as deduplication key.
+def _job_key(
+    files: list[dict[str, str]],
+    board_fqbn: str,
+    board_options: dict | None = None,
+    spiffs_files: list[dict] | None = None,
+) -> str:
+    """Stable content hash of (files, board, options, spiffs) used as the
+    deduplication key.
 
     Excludes project_id (analytics-only — different projects with identical
     code should still dedup to one build). File order is normalised so the
-    same set of files in any order produces the same key.
+    same set of files in any order produces the same key. Board options
+    and SPIFFS files are included so a partition / scheme / file change
+    queues a fresh build rather than serving the previous cached job.
     """
     h = hashlib.sha256()
     h.update(board_fqbn.encode())
@@ -65,6 +73,17 @@ def _job_key(files: list[dict[str, str]], board_fqbn: str) -> str:
         h.update(b"\0")
         h.update(f["content"].encode())
         h.update(b"\0")
+    if board_options:
+        # Sort keys so option-order doesn't perturb the hash.
+        import json
+        h.update(json.dumps(board_options, sort_keys=True).encode())
+        h.update(b"\0")
+    if spiffs_files:
+        for f in sorted(spiffs_files, key=lambda x: x["name"]):
+            h.update(f["name"].encode())
+            h.update(b"\0")
+            h.update(f["content_b64"].encode())
+            h.update(b"\0")
     return h.hexdigest()
 
 
@@ -95,6 +114,12 @@ class SketchFile(BaseModel):
     content: str
 
 
+class SpiffsFileBody(BaseModel):
+    """One file destined for the SPIFFS partition image, base64-encoded."""
+    name: str
+    content_b64: str
+
+
 class CompileRequest(BaseModel):
     # New multi-file API
     files: list[SketchFile] | None = None
@@ -103,6 +128,14 @@ class CompileRequest(BaseModel):
     board_fqbn: str = "arduino:avr:uno"
     # Optional: associate this compile with a project for analytics
     project_id: str | None = None
+    # Per-board ESP32 build options (Partition Scheme, CPU Freq, Flash Mode,
+    # PSRAM, etc.). Loose dict so the frontend can add fields without a
+    # backend deploy — espidf_compiler.compile validates known keys and
+    # ignores the rest. None / missing on non-ESP32 boards.
+    board_options: dict[str, str | int | bool] | None = None
+    # User-uploaded files to bake into the SPIFFS partition (#162). Empty /
+    # None means the SPIFFS region stays blank (current behaviour).
+    spiffs_files: list[SpiffsFileBody] | None = None
 
 
 class CompileResponse(BaseModel):
@@ -160,8 +193,15 @@ async def _run_compile(
     """
     if request.board_fqbn.startswith("esp32:") and espidf_compiler.available:
         logger.info(f"[compile] Using ESP-IDF for {request.board_fqbn}")
+        spiffs_dicts = (
+            [f.model_dump() for f in request.spiffs_files]
+            if request.spiffs_files else None
+        )
         result = await espidf_compiler.compile(
-            files, request.board_fqbn, progress_callback=progress_callback,
+            files, request.board_fqbn,
+            progress_callback=progress_callback,
+            board_options=request.board_options,
+            spiffs_files=spiffs_dicts,
         )
         return CompileResponse(
             success=result["success"],
@@ -185,7 +225,12 @@ async def _run_compile(
             error=f"Failed to install required core: {core_status.get('core_id')}",
         )
 
-    result = await arduino_cli.compile(files, request.board_fqbn)
+    # AVR / RP2040 / ATTiny path. `board_options` is accepted for API
+    # symmetry but currently ignored — those toolchains don't expose the
+    # ESP32 partition / PSRAM knobs we're surfacing.
+    result = await arduino_cli.compile(
+        files, request.board_fqbn, board_options=request.board_options,
+    )
     return CompileResponse(
         success=result["success"],
         hex_content=result.get("hex_content"),
@@ -301,7 +346,13 @@ async def _compile_job(
             success=response.success,
             duration_ms=int((time.monotonic() - started) * 1000),
             error_kind=error_kind,
-            extra={"file_count": len(files), "has_wifi": response.has_wifi, "async": True},
+            extra={
+                "file_count": len(files),
+                "has_wifi": response.has_wifi,
+                "async": True,
+                "partition_scheme": (request.board_options or {}).get("partitionScheme"),
+                "spiffs_file_count": len(request.spiffs_files or []),
+            },
         )
     except Exception as exc:
         logger.exception(f"[compile] async job {job_id} failed")
@@ -366,7 +417,12 @@ async def compile_sketch(
         success=response.success,
         duration_ms=duration_ms,
         error_kind=None if response.success else _classify_compile_error(response.stderr, response.error),
-        extra={"file_count": len(files), "has_wifi": response.has_wifi},
+        extra={
+            "file_count": len(files),
+            "has_wifi": response.has_wifi,
+            "partition_scheme": (request.board_options or {}).get("partitionScheme"),
+            "spiffs_file_count": len(request.spiffs_files or []),
+        },
         request=http_request,
     )
     return response
@@ -411,7 +467,10 @@ async def compile_start(
     files = _resolve_files(request)
     _purge_expired_jobs()
 
-    key = _job_key(files, request.board_fqbn)
+    spiffs_dicts = (
+        [f.model_dump() for f in request.spiffs_files] if request.spiffs_files else None
+    )
+    key = _job_key(files, request.board_fqbn, request.board_options, spiffs_dicts)
     existing_id = JOB_BY_KEY.get(key)
     if existing_id is not None:
         existing = COMPILE_JOBS.get(existing_id)

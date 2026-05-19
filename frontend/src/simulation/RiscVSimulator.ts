@@ -139,7 +139,7 @@ export class RiscVSimulator {
                 const pin = pinOffset + bit;
                 const state = !!(val & (1 << bit));
                 this.onPinChangeWithTime?.(pin, state, timeMs);
-                this.pinManager.setPinState(pin, state);
+                this.pinManager.setPinState(pin, state, 'mcu');
               }
             }
           }

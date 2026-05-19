@@ -128,9 +128,35 @@ export function connectMcuEdgesToService(service: CircuitSimulationService): () 
       if (!pinName) continue;
       if (wanted.size > 0 && !wanted.has(pinName)) continue;
       const unsub = pm.onPinChange(pin, (_p, state) => {
+        // Suppress digital edges when the pin has active PWM. The OCR-based
+        // PWM duty is converted to a DC-averaged voltage in NetlistBuilder
+        // (`state.duty * board.vcc`), giving smooth analog dimming. If we
+        // also let the Timer1/Timer2-driven port toggles fire alterSource,
+        // each PWM cycle's HIGH/LOW transition would race with the duty
+        // average and force the V-source to bounce between 0 and vcc —
+        // making `analogWrite(pin, 128)` look like a binary blink instead
+        // of a steady 2.5 V (Fade-LED example regression).
+        if (pm.getPwmValue(pin) > 0) return;
         schedulePin(boardId, pinName, state, vcc);
       });
       pinSubs.set(pin, unsub);
+
+      // Re-tick when PWM duty changes so the duty-averaged V-source picks
+      // up new analogWrite values. Without this, duty stays whatever it was
+      // at first solve and `analogWrite()` in a loop never updates the
+      // visible LED. Throttled to ~60 Hz to amortise the netlist-rebuild
+      // cost (the firmware ramps brightness every 30 ms in the canonical
+      // Fade-LED example, well within this budget).
+      let pwmTickPending = false;
+      const unsubPwm = pm.onPwmChange(pin, () => {
+        if (pwmTickPending) return;
+        pwmTickPending = true;
+        setTimeout(() => {
+          pwmTickPending = false;
+          void service.tick();
+        }, 16);
+      });
+      pinSubs.set(pin + 1000, unsubPwm); // key offset to avoid collision
     }
   }
 

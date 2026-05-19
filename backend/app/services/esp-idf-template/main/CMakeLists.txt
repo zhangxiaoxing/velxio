@@ -55,8 +55,18 @@ if(DEFINED ENV{ARDUINO_ESP32_PATH})
     # for ESP32-CAM where GPIO 2 isn't broken out, the user should use an
     # explicit pin number — but this default keeps the new-project flow
     # smooth.
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE
-        "LED_BUILTIN=2")
+    #
+    # SKIP on ESP32-C3 and S3 variants: their pins_arduino.h DOES define
+    # LED_BUILTIN already (as `static const uint8_t LED_BUILTIN = ...;`
+    # plus `#define LED_BUILTIN LED_BUILTIN`). Pre-defining it from the
+    # command line clashes with the self-define: the preprocessor expands
+    # `static const uint8_t LED_BUILTIN = ...` to `static const uint8_t 2 = ...`
+    # which is a syntax error. Only set the fallback for the generic ESP32
+    # Xtensa variant that genuinely lacks the symbol.
+    if(NOT IDF_TARGET STREQUAL "esp32c3" AND NOT IDF_TARGET STREQUAL "esp32s3")
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE
+            "LED_BUILTIN=2")
+    endif()
 else()
     # Pure ESP-IDF mode: main.c #includes sketch_translated.c
     idf_component_register(

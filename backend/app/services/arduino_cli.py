@@ -225,7 +225,12 @@ class ArduinoCLIService:
         """
         return "esp32c3" in fqbn or "xiao-esp32-c3" in fqbn or "aitewinrobot-esp32c3-supermini" in fqbn
 
-    async def compile(self, files: list[dict], board_fqbn: str = "arduino:avr:uno") -> dict:
+    async def compile(
+        self,
+        files: list[dict],
+        board_fqbn: str = "arduino:avr:uno",
+        board_options: dict | None = None,
+    ) -> dict:
         """
         Compile Arduino sketch using arduino-cli.
 
@@ -234,9 +239,15 @@ class ArduinoCLIService:
         name matches the directory ("sketch").  If none exists we promote the
         first .ino file to sketch.ino automatically.
 
+        `board_options` is accepted for API symmetry with the ESP-IDF path
+        (ESP32 partition/PSRAM/etc selectors live in the UI). It is currently
+        ignored — AVR / RP2040 / ATTiny toolchains don't expose those knobs.
+        Reserved for future per-board options on those families.
+
         Returns:
             dict with keys: success, hex_content, stdout, stderr, error
         """
+        _ = board_options  # reserved; see docstring
         print(f"\n=== Starting compilation ===")
         print(f"Board: {board_fqbn}")
         print(f"Files: {[f['name'] for f in files]}")
