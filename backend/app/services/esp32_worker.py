@@ -134,17 +134,24 @@ _I2C_EVENT = ctypes.CFUNCTYPE(ctypes.c_int,    ctypes.c_uint8, ctypes.c_uint8, c
 _SPI_EVENT = ctypes.CFUNCTYPE(ctypes.c_uint8,  ctypes.c_uint8, ctypes.c_uint16)
 _UART_TX   = ctypes.CFUNCTYPE(None,            ctypes.c_uint8, ctypes.c_uint8)
 _RMT_EVENT = ctypes.CFUNCTYPE(None,            ctypes.c_uint8, ctypes.c_uint32, ctypes.c_uint32)
+# Synchronous GPIO Matrix routing callback. Fires on every guest write
+# to GPIO_FUNCx_OUT_SEL_CFG_REG with the full 9-bit signal_id; replaces
+# the 100 ms poll path in _refresh_signal_routing() once the prod
+# burn-in window confirms parity. Requires libqemu-{xtensa,riscv32}
+# 1.1.0+; older binaries omit the field and the placeholder runs.
+_GPIO_MATRIX_CB = ctypes.CFUNCTYPE(None,        ctypes.c_int, ctypes.c_int)
 
 
 class _CallbacksT(ctypes.Structure):
     _fields_ = [
-        ('picsimlab_write_pin',     _WRITE_PIN),
-        ('picsimlab_dir_pin',       _DIR_PIN),
-        ('picsimlab_i2c_event',     _I2C_EVENT),
-        ('picsimlab_spi_event',     _SPI_EVENT),
-        ('picsimlab_uart_tx_event', _UART_TX),
-        ('pinmap',                  ctypes.c_void_p),
-        ('picsimlab_rmt_event',     _RMT_EVENT),
+        ('picsimlab_write_pin',         _WRITE_PIN),
+        ('picsimlab_dir_pin',           _DIR_PIN),
+        ('picsimlab_i2c_event',         _I2C_EVENT),
+        ('picsimlab_spi_event',         _SPI_EVENT),
+        ('picsimlab_uart_tx_event',     _UART_TX),
+        ('pinmap',                      ctypes.c_void_p),
+        ('picsimlab_rmt_event',         _RMT_EVENT),
+        ('picsimlab_gpio_matrix_cb',    _GPIO_MATRIX_CB),
     ]
 
 
@@ -868,6 +875,40 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         if pixels:
             _emit({'type': 'ws2812_update', 'channel': channel, 'pixels': pixels})
 
+    def _on_gpio_matrix(gpio: int, signal_id: int) -> None:
+        """Synchronous GPIO Matrix routing event from libqemu 1.1.0+.
+        Replaces the 100 ms poll path in _refresh_signal_routing().
+
+        signal_id 0x100 = SIG_GPIO_OUT_IDX = "matrix routing cleared,
+        pin reverts to plain GPIO". Below 0x100 is the routed signal
+        source. We filter to the LEDC HS/LS range matching what the
+        poll path already handled — future peripherals just need to
+        extend the range here, not add their own poll thread.
+        """
+        if _stopped.is_set():
+            return
+        try:
+            sid_lo = signal_id & 0xFF
+            prev = _signal_router.signal_for_gpio(gpio)
+            if signal_id == 0x100 or signal_id == 0:
+                # Matrix entry reset → clear routing. Only emit if we
+                # actually had a previous entry.
+                if prev is not None:
+                    _signal_router.clear_routing(gpio)
+                    _emit({'type': 'gpio_routing_clear', 'gpio': gpio})
+                return
+            # Only emit for signals the frontend SignalRouter cares
+            # about (LEDC for now). Other writes are dropped — future
+            # peripherals (RMT-out, MCPWM) extend the range here.
+            if SIG_LEDC_HS_CH0_OUT_IDX <= sid_lo <= SIG_LEDC_LS_CH_LAST:
+                if prev != sid_lo:
+                    _signal_router.update_routing(gpio, sid_lo)
+                    _emit({'type': 'gpio_routing',
+                           'gpio': gpio, 'signal_id': sid_lo})
+        except Exception:
+            # Iothread callback — never raise, just drop.
+            pass
+
     # ── Per-slave I2C event counter (for logging) ─────────────────────────────
     _i2c_event_seq: dict = {}   # addr → event count
 
@@ -1052,15 +1093,27 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
 
     # Keep callback struct alive (prevent GC from freeing ctypes closures)
     _cbs_ref = _CallbacksT(
-        picsimlab_write_pin     = _WRITE_PIN(_on_pin_change),
-        picsimlab_dir_pin       = _DIR_PIN(_on_dir_change),
-        picsimlab_i2c_event     = _I2C_EVENT(_on_i2c_event),
-        picsimlab_spi_event     = _SPI_EVENT(_on_spi_event),
-        picsimlab_uart_tx_event = _UART_TX(_on_uart_tx),
-        pinmap                  = ctypes.cast(_PINMAP, ctypes.c_void_p).value,
-        picsimlab_rmt_event     = _RMT_EVENT(_on_rmt_event),
+        picsimlab_write_pin      = _WRITE_PIN(_on_pin_change),
+        picsimlab_dir_pin        = _DIR_PIN(_on_dir_change),
+        picsimlab_i2c_event      = _I2C_EVENT(_on_i2c_event),
+        picsimlab_spi_event      = _SPI_EVENT(_on_spi_event),
+        picsimlab_uart_tx_event  = _UART_TX(_on_uart_tx),
+        pinmap                   = ctypes.cast(_PINMAP, ctypes.c_void_p).value,
+        picsimlab_rmt_event      = _RMT_EVENT(_on_rmt_event),
+        picsimlab_gpio_matrix_cb = _GPIO_MATRIX_CB(_on_gpio_matrix),
     )
     lib.qemu_picsimlab_register_callbacks(ctypes.byref(_cbs_ref))
+    # Log whether the new symbol is present in this libqemu build.
+    # Older binaries (pre-1.1.0) silently fall back to the 100 ms
+    # poll path; the WS event shape is identical either way.
+    try:
+        if hasattr(lib, 'picsimlab_gpio_matrix_cb'):
+            _log('[gpio-matrix] libqemu 1.1.0+ detected; callback path active '
+                 '(poll thread runs as a safety net during burn-in)')
+        else:
+            _log('[gpio-matrix] libqemu <1.1.0; using poll path only')
+    except Exception:
+        pass
 
     # ── 6. QEMU thread ────────────────────────────────────────────────────────
 
