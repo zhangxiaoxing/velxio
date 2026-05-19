@@ -877,36 +877,37 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
 
     def _on_gpio_matrix(gpio: int, signal_id: int) -> None:
         """Synchronous GPIO Matrix routing event from libqemu 1.1.0+.
-        Replaces the 100 ms poll path in _refresh_signal_routing().
 
-        signal_id 0x100 = SIG_GPIO_OUT_IDX = "matrix routing cleared,
-        pin reverts to plain GPIO". Below 0x100 is the routed signal
-        source. We filter to the LEDC HS/LS range matching what the
-        poll path already handled — future peripherals just need to
-        extend the range here, not add their own poll thread.
+        Critical: this fires on QEMU's iothread, hundreds of times during
+        early boot (bootloader + IDF init configure every GPIO Matrix
+        slot). It MUST NOT do anything that can block the iothread —
+        most importantly NOT _emit() over the stdout pipe, because if
+        the manager's reader is even briefly stalled, the pipe fills,
+        write() blocks, the iothread freezes, and the entire guest
+        stops (symptom: ESP32 boot stops at "entry 0x400805e4" with no
+        Arduino setup() output).
+
+        So this callback ONLY mutates the in-memory SignalRouter
+        snapshot. The 10 Hz poll thread (_refresh_signal_routing) is
+        the sole emitter of gpio_routing / gpio_routing_clear events.
+        The callback's only benefit over the poll alone is reducing
+        the worst-case routing-to-emit latency from ~100 ms to one
+        poll tick, AND keeping the snapshot dict warm so the next
+        poll's diff is cheaper.
         """
         if _stopped.is_set():
             return
         try:
             sid_lo = signal_id & 0xFF
-            prev = _signal_router.signal_for_gpio(gpio)
-            if signal_id == 0x100 or signal_id == 0:
-                # Matrix entry reset → clear routing. Only emit if we
-                # actually had a previous entry.
-                if prev is not None:
-                    _signal_router.clear_routing(gpio)
-                    _emit({'type': 'gpio_routing_clear', 'gpio': gpio})
-                return
-            # Only emit for signals the frontend SignalRouter cares
-            # about (LEDC for now). Other writes are dropped — future
-            # peripherals (RMT-out, MCPWM) extend the range here.
-            if SIG_LEDC_HS_CH0_OUT_IDX <= sid_lo <= SIG_LEDC_LS_CH_LAST:
-                if prev != sid_lo:
-                    _signal_router.update_routing(gpio, sid_lo)
-                    _emit({'type': 'gpio_routing',
-                           'gpio': gpio, 'signal_id': sid_lo})
+            if signal_id == 0x100:
+                _signal_router.clear_routing(gpio)
+            elif SIG_LEDC_HS_CH0_OUT_IDX <= sid_lo <= SIG_LEDC_LS_CH_LAST:
+                _signal_router.update_routing(gpio, sid_lo)
+            # Other signal_id values fall outside what the frontend
+            # SignalRouter currently cares about; future peripherals
+            # extend the range above.
         except Exception:
-            # Iothread callback — never raise, just drop.
+            # Iothread callback — never raise, never block.
             pass
 
     # ── Per-slave I2C event counter (for logging) ─────────────────────────────

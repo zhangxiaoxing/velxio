@@ -67,6 +67,16 @@ jobs:
 
       - name: Run tests
         run: cd frontend && npm test
+        env:
+          # Vitest 4 forks pool keeps state alive across the 117 test
+          # files in one worker process, and several of those tests
+          # load the ngspice emscripten module (~30 MB each), the
+          # MixedModeScheduler singleton, and other lazy modules.
+          # Cumulative heap pressure exceeds Node's 4 GB default by
+          # the end of the suite and the OOM kills the worker AFTER
+          # all 1881 tests pass. Bump to 8 GB until the test files
+          # are sharded or singletons get proper dispose hooks.
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # Production build smoke — catches Vite/Rollup-only failures that
       # vitest doesn't see (chunk wiring, dynamic imports, manualChunks
