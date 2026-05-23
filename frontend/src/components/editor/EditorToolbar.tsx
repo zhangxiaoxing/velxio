@@ -597,10 +597,6 @@ export const EditorToolbar = ({
             compiledProgramLen: updatedBoard?.compiledProgram?.length ?? 0,
             autoRunFlag: autoRunAfterCompile.current,
           });
-          // For QEMU boards, always start even if compiledProgram is empty —
-          // the bridge can be told to start without firmware (for waiting on
-          // a later upload) and is the safest path when the binary may be
-          // present on the bridge but not yet reflected in the store.
           if (autoRunAfterCompile.current) {
             autoRunAfterCompile.current = false;
             if (updatedBoard?.compiledProgram) {
@@ -610,7 +606,20 @@ export const EditorToolbar = ({
               startBoard(activeBoardId);
               setMessage(null);
             } else {
+              // handleCompile returned without producing a firmware/program.
+              // Most common causes: arduino-cli unreachable, ESP-IDF compile
+              // error in the user's sketch, MicroPython firmware download
+              // failed, or the bridge rejected the load. handleCompile has
+              // already addLog'd the underlying error — surface a top-level
+              // toast too so the user knows their Run click didn't silently
+              // succeed.
+              const isMicropython = updatedBoard?.languageMode === 'micropython';
+              const errText = isMicropython
+                ? 'MicroPython firmware did not load. Click "Load MicroPython" to retry, or check the console for the underlying error.'
+                : 'Compilation produced no firmware. Check the output console for the underlying error.';
               console.warn('[handleRun] compile finished but no compiledProgram — not starting');
+              setMessage({ type: 'error', text: errText });
+              addLog({ timestamp: new Date(), type: 'error', message: errText });
             }
           }
           return;
