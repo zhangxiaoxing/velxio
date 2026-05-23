@@ -1443,7 +1443,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
                 f.content.includes('#include <WiFi.h>') ||
                 f.content.includes('#include <esp_wifi.h>') ||
                 f.content.includes('#include "WiFi.h"') ||
-                f.content.includes('WiFi.begin('),
+                f.content.includes('WiFi.begin(') ||
+                // MicroPython patterns — without these the WiFi NIC is never
+                // passed to QEMU, and `network.WLAN(STA_IF)` hangs forever
+                // trying to init a peripheral that doesn't exist, eventually
+                // tripping the FreeRTOS task watchdog (TG1WDT_SYS_RESET).
+                /import\s+network\b/.test(f.content) ||
+                /network\.WLAN/.test(f.content),
             );
           }
           esp32Bridge.wifiEnabled = hasWifi;
