@@ -1614,7 +1614,22 @@ class ESPIDFCompiler:
             # proper ESP-IDF component with its own CMakeLists.txt and
             # INCLUDE_DIRS. The root CMakeLists.txt (template) adds user_libs
             # to EXTRA_COMPONENT_DIRS so ESP-IDF discovers them automatically.
-            ext_headers = self._detect_external_includes(main_content)
+            #
+            # Scan the .ino AND every user-supplied .h/.hpp/.c/.cpp so
+            # transitive includes inside project headers (e.g. Common.h
+            # → <ESP32Servo.h>) are picked up. Previously only main_content
+            # was scanned, so libs only referenced from project headers
+            # never reached _resolve_library_components and the build
+            # died with "fatal error: ESP32Servo.h: No such file".
+            ext_headers_set: set[str] = set(
+                self._detect_external_includes(main_content)
+            )
+            for _f in files:
+                if _f.get('name', '').endswith(('.h', '.hpp', '.ino', '.c', '.cpp')):
+                    ext_headers_set.update(
+                        self._detect_external_includes(_f.get('content', ''))
+                    )
+            ext_headers = list(ext_headers_set)
             component_names: list[str] = []
             # arduino-esp32 component name (directory basename of ARDUINO_ESP32_PATH)
             arduino_comp_name = Path(self.arduino_path).name if self.arduino_path else 'arduino-esp32'
