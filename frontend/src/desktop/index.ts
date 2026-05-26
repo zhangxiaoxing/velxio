@@ -29,6 +29,7 @@ import { DesktopWelcomePage } from './DesktopWelcomePage';
 import { Esp32QemuPrompt } from './Esp32QemuPrompt';
 import { GraceBanner } from './GraceBanner';
 import { LockoutOverlay, type LockoutReason } from './LockoutOverlay';
+import { UpdateAvailableToast } from './UpdateAvailableToast';
 import {
   getGateInfo,
   invoke,
@@ -93,7 +94,16 @@ function mountSidePanels(): void {
   document.body.appendChild(host);
   sidePanelRoot = createRoot(host);
   sidePanelRoot.render(
-    h(Fragment, null, h(GraceBanner, null), h(Esp32QemuPrompt, null)),
+    h(
+      Fragment,
+      null,
+      h(GraceBanner, null),
+      h(Esp32QemuPrompt, null),
+      // v0.4.0 auto-update toast (~30s after mount). Lives below the
+      // grace banner z-index so a lockout / hard-grace doesn't get
+      // covered by a "new version available" pitch.
+      h(UpdateAvailableToast, null),
+    ),
   );
 }
 
