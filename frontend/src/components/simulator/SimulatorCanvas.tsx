@@ -259,9 +259,16 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   // their own state on click instead of opening the property dialog.
   // We treat board-less + un-paused as "interaction-running" so the same
   // gating logic that suppresses the dialog for MCU-running mode also
-  // covers board-less circuits.
+  // covers board-less circuits — BUT only when SPICE has actually
+  // engaged (submittedNetlist != ''). Without that extra check, deleting
+  // the only board on a normal Arduino+LED circuit dropped boards to 0
+  // and silently flipped every remaining component to "running" mode,
+  // which suppresses the property dialog and makes them appear
+  // unresponsive to clicks (issue #211).
   const electricalPaused = useElectricalStore((s) => s.paused);
-  const interactionRunning = running || (boards.length === 0 && !electricalPaused);
+  const electricalEngaged = useElectricalStore((s) => s.submittedNetlist !== '');
+  const interactionRunning =
+    running || (boards.length === 0 && electricalEngaged && !electricalPaused);
 
   // Refs that mirror state/props for use inside touch event closures
   // (touch listeners are added imperatively and can't access current React state)

@@ -163,6 +163,10 @@ export const EditorToolbar = ({
     setCompiling(true);
     setMessage(null);
     setConsoleOpen(true);
+    // Wipe the previous build's output before we append anything new.
+    // Issue #209: lingering logs from prior compiles made it impossible
+    // to tell the latest errors / warnings apart from stale ones.
+    setCompileLogs([]);
     trackCompileCode();
 
     // ── Chip-program path ───────────────────────────────────────────────
@@ -380,6 +384,13 @@ export const EditorToolbar = ({
       } else {
         const errText = result.error || result.stderr || 'Compile failed';
         setMessage({ type: 'error', text: errText });
+        // Issue #208: drop the previous successful program from this
+        // board so a subsequent Run cannot silently execute stale code
+        // that doesn't match the editor any more. The Run button gates
+        // on `!compiledProgram` and will refuse + force a re-compile.
+        if (activeBoardId) {
+          updateBoard(activeBoardId, { compiledProgram: null });
+        }
         // Detect missing library errors — common patterns:
         // "No such file or directory" for #include, "fatal error: XXX.h"
         const looksLikeMissingLib =

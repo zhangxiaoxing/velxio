@@ -104,7 +104,22 @@ export const Esp32QemuPrompt = () => {
       setStatus(fresh);
       if (fresh.installed) setOpen(false);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      // Issue #212: the backend returns 404 when the velxio team
+      // hasn't published an ESP32 QEMU build for the user's platform
+      // yet (Windows / Linux x86_64 / macOS aarch64). The raw
+      // "download HTTP 404" string is opaque - reword to something
+      // the user can actually act on (or at least understand isn't
+      // their fault).
+      const raw = e instanceof Error ? e.message : String(e);
+      if (/HTTP\s*404|not found/i.test(raw)) {
+        setErr(
+          'ESP32 support is not yet available for your platform. ' +
+            'The Velxio team is preparing this build - try again in a ' +
+            'few days, or use Arduino/RP2040 boards in the meantime.',
+        );
+      } else {
+        setErr(raw);
+      }
     } finally {
       setInstalling(false);
       setProgress(null);

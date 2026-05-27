@@ -26,6 +26,9 @@ import { listen } from './tauriBridge';
 import { dlog } from './log';
 import { triggerDownloadVlx, importVlxFile } from '../utils/vlxFile';
 import { useSimulatorStore } from '../store/useSimulatorStore';
+import { useEditorStore } from '../store/useEditorStore';
+import { useProjectStore } from '../store/useProjectStore';
+import { useCompileLogsStore } from '../store/useCompileLogsStore';
 import { switchLocale } from '../i18n/path';
 import { LOCALES, type Locale } from '../i18n/config';
 
@@ -74,6 +77,8 @@ async function handle(action: MenuAction, payload?: MenuEventPayload): Promise<v
       useSimulatorStore.getState().toggleSerialMonitor();
       return;
     case 'new-project':
+      newProject();
+      return;
     case 'find-in-editor':
     case 'toggle-file-explorer':
       window.dispatchEvent(new CustomEvent(`velxio:menu:${action}`));
@@ -150,6 +155,74 @@ function pickAndImportVlx(): void {
     document.body.removeChild(input);
   });
   input.click();
+}
+
+/**
+ * Wipe the current workspace and start from the default Blink sketch +
+ * empty canvas. Issue #210: the menu action used to just dispatch a
+ * CustomEvent that nobody listened to.
+ *
+ * Confirms first if the user has unsaved changes (any modified file
+ * or any component on the canvas). The Tauri-side menu can't show a
+ * confirm dialog cheaply, so we use the browser-native `confirm()`
+ * here — fine for the desktop bundle where it renders as a modal.
+ */
+function newProject(): void {
+  const sim = useSimulatorStore.getState();
+  const editor = useEditorStore.getState();
+  const project = useProjectStore.getState();
+  const compileLogs = useCompileLogsStore.getState();
+
+  const hasWork =
+    sim.boards.length > 0 ||
+    sim.components.length > 0 ||
+    sim.wires.length > 0 ||
+    editor.files.some((f) => f.modified) ||
+    project.currentProject !== null;
+
+  if (hasWork) {
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm(
+      'Start a new project? Any unsaved changes will be lost.',
+    );
+    if (!ok) return;
+  }
+
+  // Stop any running simulation first so workers / bridges shut down
+  // cleanly. Idempotent — no-op if nothing is running.
+  if (sim.running) {
+    sim.stopSimulation();
+  }
+
+  // Drop every board (also disconnects its bridges + removes wires
+  // touching it). Iterate over a snapshot copy since removeBoard
+  // mutates the array.
+  for (const board of [...sim.boards]) {
+    sim.removeBoard(board.id);
+  }
+
+  // Any non-board components + wires that weren't connected to a
+  // board still need to go.
+  sim.setComponents([]);
+  sim.setWires([]);
+
+  // Reset the editor to the default Blink sketch. loadFiles takes
+  // a {name, content}[] and rebuilds the file list, picking the
+  // first .ino as active.
+  editor.loadFiles([
+    {
+      name: 'sketch.ino',
+      content:
+        '// Arduino Blink Example\nvoid setup() {\n  pinMode(LED_BUILTIN, OUTPUT);\n}\n\nvoid loop() {\n  digitalWrite(LED_BUILTIN, HIGH);\n  delay(1000);\n  digitalWrite(LED_BUILTIN, LOW);\n  delay(1000);\n}\n',
+    },
+  ]);
+
+  // Drop project metadata so the next Save .vlx doesn't reuse the
+  // previous project's slug / name.
+  project.clearCurrentProject();
+
+  // Clear the compile output panel so old build logs don't carry over.
+  compileLogs.clear();
 }
 
 async function checkForUpdates(): Promise<void> {
