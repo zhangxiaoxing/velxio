@@ -65,16 +65,60 @@ else:
 # Xtensa library (ESP32, ESP32-S3)
 _LIB_XTENSA_NAME = f'libqemu-xtensa{_LIB_EXT}'
 _DEFAULT_LIB_XTENSA = str(_SERVICES_DIR / _LIB_XTENSA_NAME)
-LIB_PATH: str = os.environ.get('QEMU_ESP32_LIB', '') or (
-    _DEFAULT_LIB_XTENSA if os.path.isfile(_DEFAULT_LIB_XTENSA) else ''
-)
 
 # RISC-V library (ESP32-C3)
 _LIB_RISCV_NAME = f'libqemu-riscv32{_LIB_EXT}'
 _DEFAULT_LIB_RISCV = str(_SERVICES_DIR / _LIB_RISCV_NAME)
-LIB_RISCV_PATH: str = os.environ.get('QEMU_RISCV32_LIB', '') or (
-    _DEFAULT_LIB_RISCV if os.path.isfile(_DEFAULT_LIB_RISCV) else ''
-)
+
+
+def _resolve_lib(env_var: str, lib_name: str, default_path: str) -> str:
+    """Three-step resolution for the libqemu shared library.
+
+    1. Explicit env var (`QEMU_ESP32_LIB` / `QEMU_RISCV32_LIB`) — full
+       path including filename, used by Docker images that download the
+       library to a fixed location at build time.
+    2. `VELXIO_QEMU_PATH` directory — set by the Tauri desktop wrapper
+       when the user runs the in-app "Install ESP32 support" download.
+       The Tauri side drops the file as `libqemu-xtensa.<ext>` /
+       `libqemu-riscv32.<ext>` inside that directory; we just join.
+    3. Beside this module (`_DEFAULT_LIB_*`) — the legacy layout for
+       hand-installed dev environments.
+
+    First match wins. Empty string when nothing is found, in which case
+    the manager reports the ESP32 board kind as unavailable.
+
+    Resolved on every call (not cached) so the desktop's in-app
+    installer can drop the library after the sidecar boots without
+    requiring a sidecar restart.
+    """
+    direct = os.environ.get(env_var, '')
+    if direct and os.path.isfile(direct):
+        return direct
+    qemu_dir = os.environ.get('VELXIO_QEMU_PATH', '')
+    if qemu_dir:
+        candidate = os.path.join(qemu_dir, lib_name)
+        if os.path.isfile(candidate):
+            return candidate
+    if os.path.isfile(default_path):
+        return default_path
+    return ''
+
+
+def lib_xtensa_path() -> str:
+    """Current resolved path to libqemu-xtensa.<ext>, or '' if missing."""
+    return _resolve_lib('QEMU_ESP32_LIB', _LIB_XTENSA_NAME, _DEFAULT_LIB_XTENSA)
+
+
+def lib_riscv_path() -> str:
+    """Current resolved path to libqemu-riscv32.<ext>, or '' if missing."""
+    return _resolve_lib('QEMU_RISCV32_LIB', _LIB_RISCV_NAME, _DEFAULT_LIB_RISCV)
+
+
+# Module-level snapshots kept for callers that still read the constant.
+# Prefer the functions above — these reflect import-time state only and
+# won't pick up a post-boot install.
+LIB_PATH: str = lib_xtensa_path()
+LIB_RISCV_PATH: str = lib_riscv_path()
 
 _WORKER_SCRIPT = _SERVICES_DIR / 'esp32_worker.py'
 
@@ -159,16 +203,13 @@ class EspLibManager:
     @staticmethod
     def is_available() -> bool:
         """Returns True if the Xtensa DLL is present (minimum for ESP32/ESP32-S3)."""
-        return (
-            bool(LIB_PATH)
-            and os.path.isfile(LIB_PATH)
-            and _WORKER_SCRIPT.exists()
-        )
+        path = lib_xtensa_path()
+        return bool(path) and _WORKER_SCRIPT.exists()
 
     @staticmethod
     def is_riscv_available() -> bool:
         """Returns True if the RISC-V DLL is present (required for ESP32-C3)."""
-        return bool(LIB_RISCV_PATH) and os.path.isfile(LIB_RISCV_PATH)
+        return bool(lib_riscv_path())
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -197,7 +238,7 @@ class EspLibManager:
             return
 
         machine  = _MACHINE.get(board_type, 'esp32-picsimlab')
-        lib_path = LIB_RISCV_PATH if board_type in _RISCV_BOARDS else LIB_PATH
+        lib_path = lib_riscv_path() if board_type in _RISCV_BOARDS else lib_xtensa_path()
         config   = json.dumps({
             'lib_path':          lib_path,
             'firmware_b64':      firmware_b64,
