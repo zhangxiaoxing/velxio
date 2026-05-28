@@ -49,6 +49,11 @@ vi.mock('../simulation/PinManager', () => ({
     this.onPinChange = vi.fn().mockReturnValue(() => {});
     this.getListenersCount = vi.fn().mockReturnValue(0);
     this.resetPinStates = vi.fn();
+    // Added by upstream commit d64eebc (Stop semantics): the simulator
+    // store's stopBoard() invokes hardResetPinStates on the active pin
+    // manager. The mock has to expose it or test calls explode with
+    // "is not a function" even though the optional chain looks safe.
+    this.hardResetPinStates = vi.fn();
   }),
 }));
 
