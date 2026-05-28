@@ -31,10 +31,10 @@
     "hero": {
       "titleLine1": "Arduino, ESP32 y Raspberry Pi.",
       "titleAccent": "Directamente en tu navegador.",
-      "subtitle": "Escribe código, conecta componentes, pulsa ejecutar. 19 placas, más de 48 componentes, emulación real de CPU — sin hardware, sin instalación, sin nube.",
+      "subtitle": "Escribí código, conectá componentes, ejecutá. 19 placas, un agente de IA que arma circuitos por vos, emulación real de CPU, app de escritorio offline, código abierto AGPLv3.",
       "ctaPrimary": "Probar el simulador online gratis →",
       "ctaGithub": "Ver en GitHub",
-      "trustLine": "No requiere registro · Funciona 100% en tu navegador · Gratuito y de código abierto",
+      "trustLine": "Agente de IA incluido · Funciona offline · Código abierto AGPLv3 · Sin registro",
       "imageAlt": "Editor de Velxio con circuito de semáforo en Arduino Uno"
     },
     "boards": {
