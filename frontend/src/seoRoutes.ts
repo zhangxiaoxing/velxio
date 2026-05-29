@@ -410,6 +410,19 @@ export const SEO_ROUTES: SeoRoute[] = [
     },
   },
 
+  // ── Classroom (institutional sales landing) — Phase 3 D3.7
+  {
+    path: '/classroom',
+    priority: 0.85,
+    changefreq: 'monthly',
+    seoMeta: {
+      title: 'Velxio for educators — full Pro features for your classroom',
+      description:
+        'Velxio for Classroom gives every student in your course Pro-tier access (private projects, GitHub Sync, BOM and schematic exports, offline desktop) under a single institution contract. From $40/student/year with volume discounts.',
+      url: `${DOMAIN}/classroom`,
+    },
+  },
+
   // ── Auth / admin (noindex)
   { path: '/login', noindex: true },
   { path: '/register', noindex: true },

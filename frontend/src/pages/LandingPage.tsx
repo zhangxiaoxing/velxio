@@ -1238,6 +1238,7 @@ export const LandingPage: React.FC = () => {
           <Link to={localize('/examples')}>{t('header.nav.examples')}</Link>
           <Link to={localize('/editor')}>{t('header.nav.editor')}</Link>
           <Link to={localize('/pricing')}>{t('header.nav.pricing')}</Link>
+          <Link to={localize('/classroom')}>{t('header.nav.classroom', 'For schools')}</Link>
           <Link to={localize('/about')}>{t('header.nav.about')}</Link>
         </div>
         <p className="footer-copy">{t('footer.about')}</p>
