@@ -102,7 +102,15 @@ export const ExamplesGallery: React.FC<ExamplesGalleryProps> = ({ onLoadExample 
     if (searchTokens.length === 0) return true;
     const hay = exampleHaystack(example);
     return searchTokens.every((tok) => hay.includes(tok));
-  });
+  })
+    .sort((a, b) => {
+      // Order by board following the BOARD_TABS order (so Arduino Uno comes
+      // first), then alphabetically by title within each board.
+      const ra = BOARD_TABS.findIndex((t) => t.id === getBoardFilter(a));
+      const rb = BOARD_TABS.findIndex((t) => t.id === getBoardFilter(b));
+      if (ra !== rb) return (ra < 0 ? 999 : ra) - (rb < 0 ? 999 : rb);
+      return (a.title ?? '').localeCompare(b.title ?? '');
+    });
 
   // Count per board for tab badges
   const boardCounts: Record<string, number> = { all: exampleProjects.length };
