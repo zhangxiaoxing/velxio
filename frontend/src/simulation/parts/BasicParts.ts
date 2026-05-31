@@ -444,22 +444,6 @@ PartSimulationRegistry.register('biaxial-stepper', {
     const el = element as any;
     const STEP_ANGLE = 1.8;
 
-    // Full-step table: [A+, B+, A-, B-]
-    const stepTable: [boolean, boolean, boolean, boolean][] = [
-      [true, false, false, false],
-      [false, true, false, false],
-      [false, false, true, false],
-      [false, false, false, true],
-    ];
-
-    function stepIndexFromCoils(ap: boolean, bp: boolean, am: boolean, bm: boolean): number {
-      for (let i = 0; i < stepTable.length; i++) {
-        const [tap, tbp, tam, tbm] = stepTable[i];
-        if (ap === tap && bp === tbp && am === tam && bm === tbm) return i;
-      }
-      return -1;
-    }
-
     function makeMotorTracker(
       pinAminus: number | null,
       pinAplus: number | null,
@@ -472,20 +456,25 @@ PartSimulationRegistry.register('biaxial-stepper', {
         bPlus = false,
         bMinus = false;
       let cumAngle = 0;
-      let prevIdx = -1;
+      let prevField = Number.NaN;
       const unsubs: (() => void)[] = [];
 
+      // Rotor follows the net magnetic-field vector of the two coils — works
+      // for wave, two-phase full-step and half-step drive alike.
       function onCoilChange() {
-        const idx = stepIndexFromCoils(aPlus, bPlus, aMinus, bMinus);
-        if (idx < 0) return;
-        if (prevIdx < 0) {
-          prevIdx = idx;
+        const a = (aPlus ? 1 : 0) - (aMinus ? 1 : 0);
+        const b = (bPlus ? 1 : 0) - (bMinus ? 1 : 0);
+        if (a === 0 && b === 0) return;
+        const field = Math.atan2(b, a);
+        if (Number.isNaN(prevField)) {
+          prevField = field;
           return;
         }
-        const diff = (idx - prevIdx + 4) % 4;
-        if (diff === 1) cumAngle += STEP_ANGLE;
-        else if (diff === 3) cumAngle -= STEP_ANGLE;
-        prevIdx = idx;
+        let delta = field - prevField;
+        while (delta > Math.PI) delta -= 2 * Math.PI;
+        while (delta < -Math.PI) delta += 2 * Math.PI;
+        prevField = field;
+        cumAngle += (delta / (Math.PI / 2)) * STEP_ANGLE;
         setAngle(((cumAngle % 360) + 360) % 360);
       }
 

@@ -377,46 +377,31 @@ PartSimulationRegistry.register('stepper-motor', {
 
     const coils = { aMinus: false, aPlus: false, bPlus: false, bMinus: false };
     let cumAngle = el.angle ?? 0;
-    let prevStepIndex = -1;
-
-    // Full-step table: index → [A+, B+, A-, B-]
-    const stepTable: [boolean, boolean, boolean, boolean][] = [
-      [true, false, false, false], // step 0
-      [false, true, false, false], // step 1
-      [false, false, true, false], // step 2
-      [false, false, false, true], // step 3
-    ];
-
-    function coilToStepIndex(): number {
-      for (let i = 0; i < stepTable.length; i++) {
-        const [ap, bp, am, bm] = stepTable[i];
-        if (
-          coils.aPlus === ap &&
-          coils.bPlus === bp &&
-          coils.aMinus === am &&
-          coils.bMinus === bm
-        ) {
-          return i;
-        }
-      }
-      return -1;
-    }
+    // Track the magnetic-field electrical angle instead of matching a fixed
+    // coil table. The rotor follows the net field vector of the two coils, so
+    // this works for ANY drive mode the firmware (or a driver) produces:
+    // wave-drive (one coil), full-step two-phase (two coils), or half-step.
+    let prevField = Number.NaN; // previous field angle in radians, NaN = unset
 
     function onCoilChange() {
-      const idx = coilToStepIndex();
-      if (idx < 0) return;
-      if (prevStepIndex < 0) {
-        prevStepIndex = idx;
+      // Coil currents: +1 / 0 / -1 from the H-bridge terminal pair.
+      const a = (coils.aPlus ? 1 : 0) - (coils.aMinus ? 1 : 0);
+      const b = (coils.bPlus ? 1 : 0) - (coils.bMinus ? 1 : 0);
+      if (a === 0 && b === 0) return; // no field → rotor holds position
+
+      const field = Math.atan2(b, a); // electrical angle of the field vector
+      if (Number.isNaN(prevField)) {
+        prevField = field;
         return;
       }
+      // Shortest signed rotation between the two field angles.
+      let delta = field - prevField;
+      while (delta > Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+      prevField = field;
 
-      const diff = (idx - prevStepIndex + 4) % 4;
-      if (diff === 1) {
-        cumAngle += STEP_ANGLE;
-      } else if (diff === 3) {
-        cumAngle -= STEP_ANGLE;
-      }
-      prevStepIndex = idx;
+      // One quarter electrical turn (90°, π/2 rad) = one full mechanical step.
+      cumAngle += (delta / (Math.PI / 2)) * STEP_ANGLE;
       el.angle = ((cumAngle % 360) + 360) % 360;
     }
 

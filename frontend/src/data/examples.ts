@@ -1411,6 +1411,150 @@ void loop() {
     tags: ['stm32', 'blue pill', 'gpio', 'stepper', 'motor'],
   },
   {
+    id: 'uno-stepper-a4988',
+    title: 'Arduino Uno: Stepper + A4988',
+    description:
+      'Spin a bipolar stepper motor from an Arduino Uno through an A4988 driver. The MCU only pulses STEP and sets DIR; the A4988 drives the coils. The rotor turns continuously.',
+    category: 'motors',
+    difficulty: 'intermediate',
+    boardFilter: 'arduino-uno',
+    boards: [
+      {
+        boardKind: 'arduino-uno',
+        x: 40,
+        y: 80,
+        code: `// Arduino Uno + A4988 stepper driver (STEP/DIR)
+// D3 -> STEP, D4 -> DIR. One STEP pulse = one step; DIR sets direction.
+const int STEP_PIN = 3, DIR_PIN = 4;
+
+void setup() {
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  digitalWrite(DIR_PIN, HIGH);   // HIGH = clockwise
+  Serial.begin(115200);
+  Serial.println("A4988 stepper running");
+}
+
+void loop() {
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(800);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(800);
+}`,
+      },
+    ],
+    code: '',
+    components: [
+      { type: 'velxio-a4988', id: 'drv1', x: 330, y: 70, properties: {} },
+      { type: 'wokwi-stepper-motor', id: 'stp1', x: 560, y: 120, properties: {} },
+    ],
+    wires: [
+      { id: 'u-step', start: { componentId: 'arduino-uno', pinName: '3' }, end: { componentId: 'drv1', pinName: 'STEP' }, color: '#f59e0b' },
+      { id: 'u-dir', start: { componentId: 'arduino-uno', pinName: '4' }, end: { componentId: 'drv1', pinName: 'DIR' }, color: '#10b981' },
+      { id: 'u-1a', start: { componentId: 'drv1', pinName: '1A' }, end: { componentId: 'stp1', pinName: 'B+' }, color: '#ff5555' },
+      { id: 'u-1b', start: { componentId: 'drv1', pinName: '1B' }, end: { componentId: 'stp1', pinName: 'B-' }, color: '#ff9955' },
+      { id: 'u-2a', start: { componentId: 'drv1', pinName: '2A' }, end: { componentId: 'stp1', pinName: 'A+' }, color: '#55aaff' },
+      { id: 'u-2b', start: { componentId: 'drv1', pinName: '2B' }, end: { componentId: 'stp1', pinName: 'A-' }, color: '#aa77ff' },
+    ],
+    tags: ['arduino', 'uno', 'stepper', 'motor', 'a4988', 'driver'],
+  },
+  {
+    id: 'esp32-stepper-a4988',
+    title: 'ESP32: Stepper + A4988',
+    description:
+      'Spin a bipolar stepper motor from an ESP32 through an A4988 driver (STEP = GPIO26, DIR = GPIO27).',
+    category: 'motors',
+    difficulty: 'intermediate',
+    boardFilter: 'esp32',
+    boards: [
+      {
+        boardKind: 'esp32',
+        x: 40,
+        y: 80,
+        code: `// ESP32 + A4988 stepper driver (STEP/DIR)
+// GPIO26 -> STEP, GPIO27 -> DIR.
+const int STEP_PIN = 26, DIR_PIN = 27;
+
+void setup() {
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  digitalWrite(DIR_PIN, HIGH);
+  Serial.begin(115200);
+  Serial.println("A4988 stepper running");
+}
+
+void loop() {
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(800);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(800);
+}`,
+      },
+    ],
+    code: '',
+    components: [
+      { type: 'velxio-a4988', id: 'drv1', x: 330, y: 70, properties: {} },
+      { type: 'wokwi-stepper-motor', id: 'stp1', x: 560, y: 120, properties: {} },
+    ],
+    wires: [
+      { id: 'e-step', start: { componentId: 'esp32', pinName: '26' }, end: { componentId: 'drv1', pinName: 'STEP' }, color: '#f59e0b' },
+      { id: 'e-dir', start: { componentId: 'esp32', pinName: '27' }, end: { componentId: 'drv1', pinName: 'DIR' }, color: '#10b981' },
+      { id: 'e-1a', start: { componentId: 'drv1', pinName: '1A' }, end: { componentId: 'stp1', pinName: 'B+' }, color: '#ff5555' },
+      { id: 'e-1b', start: { componentId: 'drv1', pinName: '1B' }, end: { componentId: 'stp1', pinName: 'B-' }, color: '#ff9955' },
+      { id: 'e-2a', start: { componentId: 'drv1', pinName: '2A' }, end: { componentId: 'stp1', pinName: 'A+' }, color: '#55aaff' },
+      { id: 'e-2b', start: { componentId: 'drv1', pinName: '2B' }, end: { componentId: 'stp1', pinName: 'A-' }, color: '#aa77ff' },
+    ],
+    tags: ['esp32', 'stepper', 'motor', 'a4988', 'driver'],
+  },
+  {
+    id: 'pico-stepper-a4988',
+    title: 'Raspberry Pi Pico: Stepper + A4988',
+    description:
+      'Spin a bipolar stepper motor from a Raspberry Pi Pico through an A4988 driver (STEP = GP3, DIR = GP4).',
+    category: 'motors',
+    difficulty: 'intermediate',
+    boardFilter: 'raspberry-pi-pico',
+    boards: [
+      {
+        boardKind: 'raspberry-pi-pico',
+        x: 40,
+        y: 80,
+        code: `// Raspberry Pi Pico + A4988 stepper driver (STEP/DIR)
+// GP3 -> STEP, GP4 -> DIR.
+const int STEP_PIN = 3, DIR_PIN = 4;
+
+void setup() {
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  digitalWrite(DIR_PIN, HIGH);
+  Serial.begin(115200);
+  Serial.println("A4988 stepper running");
+}
+
+void loop() {
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(800);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(800);
+}`,
+      },
+    ],
+    code: '',
+    components: [
+      { type: 'velxio-a4988', id: 'drv1', x: 330, y: 70, properties: {} },
+      { type: 'wokwi-stepper-motor', id: 'stp1', x: 560, y: 120, properties: {} },
+    ],
+    wires: [
+      { id: 'p-step', start: { componentId: 'raspberry-pi-pico', pinName: 'GP3' }, end: { componentId: 'drv1', pinName: 'STEP' }, color: '#f59e0b' },
+      { id: 'p-dir', start: { componentId: 'raspberry-pi-pico', pinName: 'GP4' }, end: { componentId: 'drv1', pinName: 'DIR' }, color: '#10b981' },
+      { id: 'p-1a', start: { componentId: 'drv1', pinName: '1A' }, end: { componentId: 'stp1', pinName: 'B+' }, color: '#ff5555' },
+      { id: 'p-1b', start: { componentId: 'drv1', pinName: '1B' }, end: { componentId: 'stp1', pinName: 'B-' }, color: '#ff9955' },
+      { id: 'p-2a', start: { componentId: 'drv1', pinName: '2A' }, end: { componentId: 'stp1', pinName: 'A+' }, color: '#55aaff' },
+      { id: 'p-2b', start: { componentId: 'drv1', pinName: '2B' }, end: { componentId: 'stp1', pinName: 'A-' }, color: '#aa77ff' },
+    ],
+    tags: ['raspberry pi pico', 'rp2040', 'stepper', 'motor', 'a4988', 'driver'],
+  },
+  {
     id: 'blink-led',
     title: 'Blink LED',
     description: 'Classic Arduino blink example - toggle an LED on and off',
