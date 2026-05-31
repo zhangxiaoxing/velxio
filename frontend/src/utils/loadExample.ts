@@ -88,9 +88,7 @@ export async function loadExample(
   const {
     setComponents,
     setWires,
-    setBoardType,
     setBoardLanguageMode,
-    activeBoardId,
     boards,
     addBoard,
     removeBoard,
@@ -186,43 +184,33 @@ export async function loadExample(
     recalculateAllWirePositions();
   } else {
     // ── Single-board loading ─────────────────────────────────────────────
-    // Analog-only and digital-only SPICE examples are board-less. Remove every
-    // existing board so the canvas opens with just the circuit (boards are now
-    // optional — you can have 0, 1, or many at any time).
-    const filter = (example as any).boardFilter;
+    // Tear the canvas down to nothing first, then (unless the example is
+    // board-less) add exactly one fresh board of the target kind.
+    //
+    // Analog-only and digital-only SPICE examples are board-less — they open
+    // with just the circuit (boards are optional: 0, 1, or many at any time).
+    //
+    // Rebuilding from scratch — rather than reusing and retyping a leftover
+    // board from a previous (possibly multi-board) example — is what keeps
+    // this prolijo: a single-board example always ends with exactly one
+    // board whose id matches its kind. The old reuse path left a stale id
+    // (e.g. "stm32-bluepill" on what was now an Arduino Uno) and any extra
+    // boards as residue. This mirrors the multi-board path above; the
+    // setComponents/setWires calls below replace components and wires
+    // wholesale.
+    const filter = (example as { boardFilter?: string }).boardFilter;
     const isBoardless = filter === 'analog' || filter === 'digital';
-    if (isBoardless) {
-      const currentIds = boards.map((b) => b.id);
-      currentIds.forEach((id) => removeBoard(id));
-    } else {
+
+    boards.forEach((b) => removeBoard(b.id));
+
+    if (!isBoardless) {
       const targetBoard = example.boardType || 'arduino-uno';
-      // A previous MULTI-board example may have left several boards on the
-      // canvas. A single-board example must end with exactly one board, so
-      // drop every board past the first before retyping it. Without this
-      // the extra boards (and their editor file groups) linger as residue
-      // from the previous example. setComponents/setWires below already
-      // replace the components and wires wholesale; boards were the one
-      // piece of state this path never reset.
-      const existing = useSimulatorStore.getState().boards;
-      if (existing.length > 1) {
-        existing.slice(1).forEach((b) => removeBoard(b.id));
-      }
-      // If boards[] is empty (e.g. a previous analog example removed every
-      // board), setBoardType can't work — it only maps over existing entries.
-      // Add a fresh board instead.
-      if (useSimulatorStore.getState().boards.length === 0) {
-        const newId = addBoard(
-          targetBoard as BoardKind,
-          DEFAULT_BOARD_POSITION.x,
-          DEFAULT_BOARD_POSITION.y,
-        );
-        setActiveBoardId(newId);
-      } else {
-        // Reuse the surviving board, but make sure it's the active one
-        // first — setBoardType retypes whatever board is active.
-        setActiveBoardId(useSimulatorStore.getState().boards[0].id);
-        setBoardType(targetBoard);
-      }
+      const newId = addBoard(
+        targetBoard as BoardKind,
+        DEFAULT_BOARD_POSITION.x,
+        DEFAULT_BOARD_POSITION.y,
+      );
+      setActiveBoardId(newId);
     }
 
     // ── MicroPython + multi-file payloads ────────────────────────────────
