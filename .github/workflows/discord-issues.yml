@@ -23,7 +23,7 @@ jobs:
               : '*(none)*';
 
             const payload = {
-              content: '@everyone 📢 **New issue reported on Velxio!**',
+              content: '📢 **New issue reported on Velxio!**',
               embeds: [{
                 title: `🐛 Issue #${issue.number}: ${issue.title}`,
                 url: issue.html_url,
