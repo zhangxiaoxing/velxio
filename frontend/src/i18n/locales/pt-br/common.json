@@ -124,7 +124,7 @@
           "name": "Free",
           "tagline": "Descubra o simulador + ajuda leve da IA.",
           "f1": "100 créditos diários de IA (até 1.500/mês)",
-          "f2": "Todas as 19 placas + 48+ componentes",
+          "f2": "Mais de 30 placas + 48+ componentes",
           "f3": "Emulação real de CPU, projetos públicos",
           "cta": "Começar"
         },
@@ -133,7 +133,7 @@
           "tagline": "Para makers que constroem circuitos reais com ajuda de IA.",
           "f1": "500 créditos de IA por dia (até 15.000/mês)",
           "f2": "Projetos não listados + Velxio Desktop (offline)",
-          "f3": "Todas as 19 placas + 48+ componentes",
+          "f3": "Tempo de simulação ilimitado em ESP32, STM32 e Raspberry Pi",
           "cta": "Começar com Maker"
         },
         "pro": {

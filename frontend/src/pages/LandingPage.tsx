@@ -644,7 +644,7 @@ export const LandingPage: React.FC = () => {
           name: 'Does Velxio work offline?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'The SPICE solver and the AVR / RP2040 CPU emulators run in your browser. Xtensa and RISC-V boards (ESP32, ESP32-S3, ESP32-C3, CH32V003) and Raspberry Pi 3 Linux run through QEMU lcgamboa, bundled in the Docker image. Compilation of Arduino sketches requires the arduino-cli backend. Self-hosted Docker deployments work fully offline once running.',
+            text: 'The SPICE solver and the AVR / RP2040 CPU emulators run in your browser. Xtensa and RISC-V boards (ESP32, ESP32-S3, ESP32-C3), STM32 (ARM Cortex-M) and Raspberry Pi 3/4/5 Linux run through QEMU, bundled in the Docker image. Compilation of Arduino sketches requires the arduino-cli backend. Self-hosted Docker deployments work fully offline once running.',
           },
         },
         {
@@ -652,7 +652,7 @@ export const LandingPage: React.FC = () => {
           name: 'What boards does Velxio support?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Velxio supports 19 boards across 5 CPU architectures: AVR8 (Arduino Uno, Nano, Mega 2560, ATtiny85, Leonardo, Pro Mini), RP2040 (Raspberry Pi Pico, Pico W), RISC-V (ESP32-C3, XIAO ESP32-C3, CH32V003), Xtensa QEMU (ESP32, ESP32-S3, ESP32-CAM, Nano ESP32), and ARM Cortex-A53 QEMU (Raspberry Pi 3B running Linux).',
+            text: 'Velxio supports 30+ boards across 6 CPU architectures: AVR8 (Arduino Uno, Nano, Mega 2560, ATtiny85), RP2040 (Raspberry Pi Pico, Pico W), Xtensa QEMU (ESP32, ESP32-S3, ESP32-CAM, Nano ESP32), RISC-V QEMU (ESP32-C3, XIAO ESP32-C3), ARM Cortex-M QEMU (STM32 Blue Pill, Black Pill, F401, F4 Discovery, Netduino, Olimex H405), and ARM Cortex-A QEMU (Raspberry Pi 3, 4 and 5 running Linux).',
           },
         },
         {

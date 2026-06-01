@@ -124,7 +124,7 @@
           "name": "Free",
           "tagline": "Discover the simulator + light AI help.",
           "f1": "100 daily AI credits (up to 1,500/month)",
-          "f2": "All 19 boards + 48+ components",
+          "f2": "All 30+ boards + 48+ components",
           "f3": "Real CPU emulation, public projects",
           "cta": "Get started"
         },
@@ -133,7 +133,7 @@
           "tagline": "For makers shipping real circuits with AI help.",
           "f1": "500 daily AI credits (up to 15,000/month)",
           "f2": "Unlisted projects + Velxio Desktop (offline)",
-          "f3": "All 19 boards + 48+ components",
+          "f3": "Unlimited ESP32, STM32 & Raspberry Pi run time",
           "cta": "Start Maker"
         },
         "pro": {
