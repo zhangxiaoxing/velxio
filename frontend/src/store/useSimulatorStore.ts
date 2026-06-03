@@ -827,6 +827,9 @@ interface SimulatorState {
   startSimulation: () => void;
   stopSimulation: () => void;
   resetSimulation: () => void;
+  /** Bump hexEpoch to force every component part to re-attach (e.g. so a
+   *  board-less custom chip picks up freshly compiled WASM). */
+  restartParts: () => void;
   setCompiledHex: (hex: string) => void;
   setCompiledBinary: (base64: string) => void;
   setRunning: (running: boolean) => void;
@@ -2138,6 +2141,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       const boardId = activeBoardId ?? INITIAL_BOARD_ID;
       get().startBoard(boardId);
     },
+
+    restartParts: () => set((s) => ({ hexEpoch: s.hexEpoch + 1 })),
 
     stopSimulation: () => {
       const { activeBoardId } = get();

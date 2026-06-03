@@ -621,4 +621,94 @@ export const retroIntelExamples: ExampleProject[] = [
       },
     ],
   },
+
+  // ── Z80 Larson Scanner — NO board (general-purpose electronics) ──
+  // A programmable Z80 chip + 8 LEDs + a regulated power supply, with NO
+  // Arduino/ESP32 on the canvas. Demonstrates that Velxio runs custom chips
+  // standalone. Board-less (boardFilter: 'digital'); the ROM is pre-baked so
+  // only the chip WASM compiles on Run.
+  {
+    id: 'z80-larson-no-board',
+    title: 'Z80 Larson Scanner (no board)',
+    description:
+      'The programmable Z80 chip drives 8 LEDs with NO Arduino — powered by a ' +
+      'regulated bench supply. Velxio runs custom chips as a general-purpose ' +
+      'electronics simulator. Click Run: a single LED walks back and forth.',
+    category: 'circuits',
+    difficulty: 'intermediate',
+    boardFilter: 'digital',
+    tags: ['retro', 'z80', 'zilog', 'cpu', 'leds', 'larson', 'no-board', 'power-supply', 'custom-chip', 'spice', 'programmable'],
+    code: `// Z80 Larson Scanner — NO Arduino, just the chip + a power supply.\n//\n// Velxio runs custom chips as a general-purpose electronics simulator: the\n// programmable Z80 on the canvas executes its ROM and drives the 8 LEDs\n// directly, powered by the regulated supply (no MCU needed). Click Run.\n\nvoid setup() {}\nvoid loop() {}\n`,
+    components: [
+      {
+        type: 'power-supply',
+        id: 'psu',
+        x: 180,
+        y: 200,
+        properties: { mode: 'dc', voltage: 5, currentLimit: 2, frequency: 50 },
+      },
+      {
+        type: 'custom-chip',
+        id: 'z80cpu',
+        x: 440,
+        y: 150,
+        properties: {
+          chipName: 'Z80 CPU (programmable)',
+          sourceC: z80CpuC,
+          chipJson: z80CpuJ,
+          wasmBase64: '',
+          // Pre-baked larson.s ROM (LD SP,0xBFFF; rotate a bit across 0xC000).
+          romBytes: 'Mf+/PgEyAMD1zRAA8QcY9Q5QBgAQ/g0g+ck=',
+          programFile: '',
+          programTarget: 'z80',
+        },
+      },
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        type: 'wokwi-resistor',
+        id: `r-${i}`,
+        x: 760,
+        y: 110 + i * 50,
+        properties: { value: '220' },
+      })),
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        type: 'wokwi-led',
+        id: `led-${i}`,
+        x: 900,
+        y: 110 + i * 50,
+        properties: { color: i % 2 === 0 ? 'red' : 'orange' },
+      })),
+    ],
+    wires: [
+      {
+        id: 'psu-vcc',
+        start: { componentId: 'psu', pinName: 'SIG' },
+        end: { componentId: 'z80cpu', pinName: 'VCC' },
+        color: '#e74c3c',
+      },
+      {
+        id: 'psu-gnd',
+        start: { componentId: 'psu', pinName: 'GND' },
+        end: { componentId: 'z80cpu', pinName: 'GND' },
+        color: '#000000',
+      },
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        id: `w-led-${i}`,
+        start: { componentId: 'z80cpu', pinName: `LED${i}` },
+        end: { componentId: `r-${i}`, pinName: '1' },
+        color: '#facc15',
+      })),
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        id: `w-r-${i}`,
+        start: { componentId: `r-${i}`, pinName: '2' },
+        end: { componentId: `led-${i}`, pinName: 'A' },
+        color: '#facc15',
+      })),
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        id: `w-gnd-${i}`,
+        start: { componentId: `led-${i}`, pinName: 'C' },
+        end: { componentId: 'psu', pinName: 'GND' },
+        color: '#000000',
+      })),
+    ],
+  },
 ];

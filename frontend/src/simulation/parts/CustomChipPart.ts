@@ -19,6 +19,7 @@ import {
   detectSimulatorKind,
 } from '../customChips';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { useElectricalStore } from '../../store/useElectricalStore';
 import { clearChipDrives } from '../customChips/chipPinDrives';
 import { requestElectricalResolve } from '../spice/electricalResolveHook';
 
@@ -202,10 +203,18 @@ PartSimulationRegistry.register('custom-chip', {
         // exposes the same epoch via vx_sim_now_nanos.
         const tick = () => {
           if (disposed || !instance) return;
-          try {
-            instance.tickTimers(BigInt(Math.floor(performance.now() * 1_000_000)));
-          } catch (e) {
-            console.error(`[custom-chip:${componentId}] tickTimers threw:`, e);
+          // When there is no board, the chip is driven by the editor's Run /
+          // Stop, which toggle the electrical "paused" flag — freeze the chip
+          // while paused (but keep the rAF alive so Run resumes instantly).
+          // With a board present, behaviour is unchanged: tick whenever attached.
+          const boardless = useSimulatorStore.getState().boards.length === 0;
+          const runnable = !boardless || !useElectricalStore.getState().paused;
+          if (runnable) {
+            try {
+              instance.tickTimers(BigInt(Math.floor(performance.now() * 1_000_000)));
+            } catch (e) {
+              console.error(`[custom-chip:${componentId}] tickTimers threw:`, e);
+            }
           }
           rafHandle = requestAnimationFrame(tick);
         };

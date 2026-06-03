@@ -427,10 +427,17 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
         ({
           setPinState: () => {},
           isRunning: () => false,
-          pinManager: {
-            onPinChange: () => () => {},
-            triggerPinChange: () => {},
-          } as any,
+          // Board-less circuits have no MCU simulator, but a custom chip still
+          // needs a real PinManager so its digital pin writes/reads reach the
+          // components wired to it (LEDs, buttons, other chips). Hand it the
+          // shared flat PinManager that SimulatorCanvas subscribes LEDs to, so
+          // both sides talk on the same numeric/synthetic pin ids. Falls back
+          // to a no-op only if even that isn't ready yet.
+          pinManager:
+            (useSimulatorStore.getState().pinManager as any) ?? {
+              onPinChange: () => () => {},
+              triggerPinChange: () => {},
+            },
         } as any);
       // Helper to find Arduino pin connected to a component pin.
       // Traces through electrically-transparent passive components so that a

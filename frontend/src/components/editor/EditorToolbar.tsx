@@ -610,10 +610,32 @@ export const EditorToolbar = ({
       if (!ok) return;
     }
 
-    // Board-less circuits (SPICE-only digital / analog gallery) have no MCU
-    // to start. Resuming the electrical solver replays any switch toggles
-    // captured while paused so the canvas catches up instantly.
+    // Board-less circuits have no MCU to start. If there are custom-chip CPUs
+    // on the canvas, compile them (WASM + ROM) and re-attach so they pick up
+    // the fresh WASM — Velxio runs custom chips with no Arduino/ESP32 board,
+    // as a general-purpose electronics simulator. Then resume the electrical
+    // solver (replays any switch toggles captured while paused).
     if (isBoardless) {
+      const customChips = useSimulatorStore
+        .getState()
+        .components.filter((c) => c.metadataId === 'custom-chip');
+      if (customChips.length > 0) {
+        setCompiling(true);
+        setConsoleOpen(true);
+        setCompileLogs([]);
+        try {
+          await prepareCustomChips(customChips, files);
+        } catch (e) {
+          addLog({
+            timestamp: new Date(),
+            type: 'error',
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+        setCompiling(false);
+        // Force the chip parts to re-attach with their freshly compiled WASM.
+        useSimulatorStore.getState().restartParts();
+      }
       setElectricalPaused(false);
       setMessage(null);
       return;
