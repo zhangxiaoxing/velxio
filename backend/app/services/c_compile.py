@@ -146,12 +146,17 @@ async def compile_c(source: str, target: CTarget) -> dict:
         c_path = tmp / "program.c"
         c_path.write_text(source, encoding="utf-8")
 
-        # Let SDCC link its default crt0 at 0x0000 — it places a small init
-        # stub there which sets SP and jumps to _main(). User code lives
-        # right after the stub (typically <0x80 bytes in).
+        # Do NOT pass --code-loc. SDCC's z80 crt0 hard-codes the reset vector
+        # at 0x0000 (`jp init`) and its init stub at `.org 0x100` (sets SP,
+        # calls _main). Forcing `--code-loc 0x100` placed the relocatable
+        # _CODE segment ON TOP of that absolute init stub, so reset jumped
+        # straight into __clock/_exit (rst 0x08 → ret with a garbage stack)
+        # and every Z80 C program derailed before reaching main — the LEDs
+        # never moved. Letting SDCC place _CODE after the crt0 header keeps
+        # the init stub intact. --data-loc 0x8000 matches the z80-cpu chip's
+        # RAM window (which spans 0x8000-0xFFFF so the crt0's SP=0 stack works).
         cmd = [
             sdcc, flag,
-            "--code-loc", "0x0100",
             "--data-loc", "0x8000",
             "-o", str(tmp / "program.ihx"),
             str(c_path),
