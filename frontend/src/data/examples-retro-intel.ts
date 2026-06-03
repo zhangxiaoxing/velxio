@@ -74,19 +74,16 @@ void main(void) {
 }
 `;
 
-const chaserZ80CSketch = `// Z80 LED chaser — C source compiled by SDCC.
+const chaserZ80CSketch = `// Z80 LED chaser — the program is written in C (chaser.c) and compiled to
+// the Z80 by SDCC on the backend.
 //
-// The companion file is chaser.c. With sdcc installed on the backend,
-// clicking Compile shells out to:
-//     sdcc -mz80 --code-loc 0x100 --data-loc 0x8000 chaser.c
-// and the resulting Intel HEX is loaded into the z80-cpu chip's ROM.
+// Just click Run. Velxio does the rest automatically:
+//   1. compiles the z80-cpu chip's C source to WASM,
+//   2. compiles chaser.c to a Z80 ROM (sdcc -mz80) and loads it into the chip,
+//   3. compiles this (empty) Arduino sketch and starts the simulation.
+// A single LED then walks back and forth across the 8 outputs.
 //
-// Steps:
-//   1. Click chaser.c in the file explorer.
-//   2. Click Compile. If SDCC isn't installed yet the toolbar will
-//      say so — install with \`apt-get install sdcc\` (Linux) or
-//      \`winget install SDCC.sdcc\` (Windows), then restart the backend.
-//   3. Click Run. A single LED bounces back and forth across the 8 outputs.
+// Want to change the animation? Edit chaser.c and hit Run again.
 
 void setup() {}
 void loop() {}
@@ -128,12 +125,12 @@ const larsonZ80Sketch = `// Z80 Larson Scanner -- Arduino Uno companion sketch.
 // The Z80 chip on the canvas runs the larson.s program. This Arduino
 // sketch just keeps Serial alive in case you wire UART later.
 //
-// Steps:
-//   1. Open larson.s and click Compile.
-//   2. Click Run. A bit will walk across the 8 LEDs.
+// Just click Run. Velxio automatically compiles the z80-cpu chip to WASM,
+// assembles larson.s into a Z80 ROM, loads it into the chip, and starts the
+// simulation. A single bit then walks across the 8 LEDs.
 //
 // To slow it down or speed it up: change the "LD C, 80" line in larson.s
-// (higher number = slower).
+// (higher number = slower), then hit Run again.
 
 void setup() {}
 void loop() {}

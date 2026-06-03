@@ -17,6 +17,7 @@ import {
   formatForFile,
   targetForChip,
 } from '../../services/romCompileService';
+import { compileChip } from '../../services/chipCompileService';
 import { reportRunEvent } from '../../services/metricsService';
 import { useProjectStore } from '../../store/useProjectStore';
 import { LibraryManagerModal } from '../simulator/LibraryManagerModal';
@@ -195,6 +196,120 @@ export const EditorToolbar = ({
     [setCompileLogs],
   );
 
+  /**
+   * Make every custom-chip on the canvas runnable: compile its C source to
+   * WASM (when it has none yet) and, for programmable CPU chips, assemble or
+   * compile the program file it references into ROM bytes — stashing both on
+   * the chip component's `properties` so the next simulation start picks them
+   * up. Non-fatal by design: a chip that fails to compile is logged and
+   * skipped so the board itself still runs.
+   */
+  const prepareCustomChips = useCallback(
+    async (
+      chips: { id: string; properties: Record<string, unknown> }[],
+      boardFiles: { name: string; content: string }[],
+    ) => {
+      const codeChanged = useEditorStore.getState().codeChangedSinceLastCompile;
+      const updateComponent = useSimulatorStore.getState().updateComponent;
+
+      for (const chip of chips) {
+        // Re-read the freshest properties each iteration (an earlier chip's
+        // update doesn't touch this one, but be defensive).
+        const live = useSimulatorStore.getState().components.find((c) => c.id === chip.id);
+        const props = { ...(live?.properties ?? chip.properties) } as Record<string, unknown>;
+        const chipLabel = String(props.chipName ?? 'custom chip');
+        const sourceC = String(props.sourceC ?? '');
+        const chipJson = String(props.chipJson ?? '{}');
+        let changed = false;
+
+        // 1. C -> WASM. Only when missing — the chip designer fills this too.
+        if (!String(props.wasmBase64 ?? '') && sourceC) {
+          addLog({
+            timestamp: new Date(),
+            type: 'info',
+            message: `Compiling chip "${chipLabel}" to WASM...`,
+          });
+          try {
+            const r = await compileChip(sourceC, chipJson);
+            if (r.success && r.wasm_base64) {
+              props.wasmBase64 = r.wasm_base64;
+              changed = true;
+              addLog({
+                timestamp: new Date(),
+                type: 'success',
+                message: `Chip "${chipLabel}" compiled (${r.byte_size} B WASM).`,
+              });
+            } else {
+              addLog({
+                timestamp: new Date(),
+                type: 'error',
+                message: `Chip "${chipLabel}" WASM compile failed: ${r.error || r.stderr || 'unknown error'}`,
+              });
+            }
+          } catch (e) {
+            addLog({
+              timestamp: new Date(),
+              type: 'error',
+              message: `Chip "${chipLabel}" WASM compile error: ${e instanceof Error ? e.message : String(e)}`,
+            });
+          }
+        }
+
+        // 2. program file -> ROM bytes (programmable CPU chips). Recompile
+        //    when there's no ROM yet or the user edited code since last build.
+        const programFile = String(props.programFile ?? '').trim();
+        if (programFile && (!String(props.romBytes ?? '') || codeChanged)) {
+          const file = boardFiles.find((f) => f.name === programFile);
+          if (!file) {
+            addLog({
+              timestamp: new Date(),
+              type: 'error',
+              message: `Chip "${chipLabel}": program file "${programFile}" not found in this board's files.`,
+            });
+          } else {
+            const target = targetForChip(chipJson);
+            const fmt = formatForFile(programFile);
+            addLog({
+              timestamp: new Date(),
+              type: 'info',
+              message: `Assembling "${programFile}" (target=${target}, format=${fmt}) for chip "${chipLabel}"...`,
+            });
+            try {
+              const rr = await compileRom(file.content, target, fmt);
+              if (rr.success && rr.rom_base64) {
+                props.romBytes = rr.rom_base64;
+                props.programFile = programFile;
+                changed = true;
+                addLog({
+                  timestamp: new Date(),
+                  type: 'success',
+                  message: `ROM ready: ${rr.byte_size} B injected into "${chipLabel}".`,
+                });
+              } else {
+                addLog({
+                  timestamp: new Date(),
+                  type: 'error',
+                  message: `ROM compile failed for "${programFile}": ${rr.error || rr.stderr || 'unknown error'}`,
+                });
+              }
+            } catch (e) {
+              addLog({
+                timestamp: new Date(),
+                type: 'error',
+                message: `ROM compile error for "${programFile}": ${e instanceof Error ? e.message : String(e)}`,
+              });
+            }
+          }
+        }
+
+        if (changed) {
+          updateComponent(chip.id, { properties: props } as any);
+        }
+      }
+    },
+    [addLog],
+  );
+
   const handleCompile = async () => {
     setCompiling(true);
     setMessage(null);
@@ -205,100 +320,35 @@ export const EditorToolbar = ({
     setCompileLogs([]);
     trackCompileCode();
 
-    // ── Chip-program path ───────────────────────────────────────────────
-    // If the editor's active file is a chip-program file we don't compile
-    // Arduino code — we assemble/compile it into ROM bytes via
-    // /api/compile-rom and stash the result on every custom-chip component
-    // that points at this filename through its `programFile` property. The
-    // chip's emulator then reads the bytes on chip_setup via vx_rom_size /
-    // vx_rom_read.
+    // ── Custom-chip preparation ─────────────────────────────────────────
+    // Any custom-chip on the canvas is made "live" here so a single
+    // Compile / Run is enough — no separate trip through the chip designer
+    // or a manual ROM compile. For every custom-chip we:
+    //   1. compile its C source to WASM (when it has none yet), and
+    //   2. for programmable CPU chips, assemble/compile the program file it
+    //      points at (larson.s, chaser.c, …) into ROM bytes.
+    // Both artefacts are stashed on the chip component's `properties`;
+    // CustomChipPart reads wasmBase64 + romBytes at simulation start.
     //
-    // A file is "chip program" when EITHER its extension is unambiguous
-    // (.s/.asm/.hex/.bin) OR some custom-chip on the canvas has
-    // programFile === activeFile.name. The latter lets .c files route to
-    // SDCC instead of arduino-cli when wired to a CPU chip.
-    const activeFile = files.find((f) => f.id === useEditorStore.getState().activeFileId);
+    // The chip program files are ALSO kept out of the Arduino sketch compile
+    // below (see `chipProgramFiles`) — otherwise arduino-cli/avr-gcc would
+    // try to build e.g. chaser.c and choke on SDCC-only syntax such as
+    // `__at(0xC000)`, which is exactly what broke the Z80 examples.
     const componentsForCompile = useSimulatorStore.getState().components;
-    const chipsBoundToFile = activeFile
-      ? componentsForCompile.filter((c) => {
-          if (c.metadataId !== 'custom-chip') return false;
-          const prog = String((c.properties as any)?.programFile ?? '').trim();
-          return prog === activeFile.name;
-        })
-      : [];
-
-    if (activeFile && (isChipProgramFile(activeFile.name) || chipsBoundToFile.length > 0)) {
-      try {
-        const chips = chipsBoundToFile.length > 0
-          ? chipsBoundToFile
-          : componentsForCompile.filter((c) => {
-              if (c.metadataId !== 'custom-chip') return false;
-              const prog = String((c.properties as any)?.programFile ?? '').trim();
-              return prog === '' || prog === activeFile.name;
-            });
-        if (chips.length === 0) {
-          addLog({
-            timestamp: new Date(),
-            type: 'error',
-            message: `No custom-chip on the canvas references ${activeFile.name}. Drop an "i8080 CPU" chip, or set its programFile property.`,
-          });
-          setMessage({ type: 'error', text: 'No matching custom-chip on canvas' });
-          setCompiling(false);
-          return;
-        }
-        // Resolve target from the first matching chip's chip.json.
-        const firstChipJson = String((chips[0].properties as any)?.chipJson ?? '{}');
-        const target = targetForChip(firstChipJson);
-        const fmt = formatForFile(activeFile.name);
-        addLog({
-          timestamp: new Date(),
-          type: 'info',
-          message: `Assembling ${activeFile.name} (target=${target}, format=${fmt}) for ${chips.length} chip(s)...`,
-        });
-        const result = await compileRom(activeFile.content, target, fmt);
-        if (!result.success || !result.rom_base64) {
-          addLog({
-            timestamp: new Date(),
-            type: 'error',
-            message: result.error || 'ROM compile failed',
-          });
-          if (result.stderr) {
-            addLog({ timestamp: new Date(), type: 'error', message: result.stderr });
-          }
-          setMessage({ type: 'error', text: result.error || 'ROM compile failed' });
-          setCompiling(false);
-          return;
-        }
-        // Inject into every matching chip's romBytes property.
-        const updateComponent = useSimulatorStore.getState().updateComponent;
-        for (const chip of chips) {
-          updateComponent(chip.id, {
-            properties: {
-              ...(chip.properties as Record<string, unknown>),
-              romBytes: result.rom_base64,
-              programFile: activeFile.name,
-            },
-          });
-        }
-        addLog({
-          timestamp: new Date(),
-          type: 'success',
-          message: `ROM compiled: ${result.byte_size} bytes injected into ${chips.length} chip(s).`,
-        });
-        setMessage({
-          type: 'success',
-          text: `ROM ready (${result.byte_size} B). Hit Run.`,
-        });
-      } catch (e) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        addLog({ timestamp: new Date(), type: 'error', message: errMsg });
-        setMessage({ type: 'error', text: errMsg });
-      } finally {
-        setCompiling(false);
-      }
-      return;
+    const customChips = componentsForCompile.filter((c) => c.metadataId === 'custom-chip');
+    const chipProgramFiles = new Set<string>();
+    for (const chip of customChips) {
+      const pf = String((chip.properties as any)?.programFile ?? '').trim();
+      if (pf) chipProgramFiles.add(pf);
     }
-    // ── End chip-program path ───────────────────────────────────────────
+
+    if (customChips.length > 0) {
+      const boardFiles = activeBoard?.activeFileGroupId
+        ? useEditorStore.getState().getGroupFiles(activeBoard.activeFileGroupId)
+        : files;
+      await prepareCustomChips(customChips, boardFiles);
+    }
+    // ── End custom-chip preparation ─────────────────────────────────────
 
     const kind = activeBoard?.boardKind;
 
@@ -361,10 +411,15 @@ export const EditorToolbar = ({
       const groupFiles = activeBoard?.activeFileGroupId
         ? useEditorStore.getState().getGroupFiles(activeBoard.activeFileGroupId)
         : files;
-      const sketchFiles = (groupFiles.length > 0 ? groupFiles : files).map((f) => ({
-        name: f.name,
-        content: f.content,
-      }));
+      const sketchFiles = (groupFiles.length > 0 ? groupFiles : files)
+        // Keep chip-program files (a chip's programFile, or .s/.asm/.hex/.bin)
+        // out of the arduino-cli build — they're compiled to ROM above, not
+        // Arduino sources, and avr-gcc chokes on e.g. SDCC's __at().
+        .filter((f) => !chipProgramFiles.has(f.name) && !isChipProgramFile(f.name))
+        .map((f) => ({
+          name: f.name,
+          content: f.content,
+        }));
 
       // Stream live cmake + ninja output into the compilation console as
       // it arrives, instead of waiting for the whole build to finish.
@@ -767,6 +822,24 @@ export const EditorToolbar = ({
       message: `Compiling all ${boardsList.length} board${boardsList.length === 1 ? '' : 's'}...`,
     });
 
+    // Make every custom-chip live (WASM + ROM) before compiling the boards,
+    // mirroring the single-board Compile path, and collect their program file
+    // names so they stay out of the arduino-cli builds below.
+    const allCustomChips = useSimulatorStore
+      .getState()
+      .components.filter((c) => c.metadataId === 'custom-chip');
+    const chipProgramFiles = new Set<string>();
+    for (const chip of allCustomChips) {
+      const pf = String((chip.properties as any)?.programFile ?? '').trim();
+      if (pf) chipProgramFiles.add(pf);
+    }
+    if (allCustomChips.length > 0) {
+      const everyFile = boardsList.flatMap((b) =>
+        useEditorStore.getState().getGroupFiles(b.activeFileGroupId),
+      );
+      await prepareCustomChips(allCustomChips, everyFile);
+    }
+
     let ok = 0;
     let failed = 0;
 
@@ -798,7 +871,9 @@ export const EditorToolbar = ({
 
       try {
         const groupFiles = useEditorStore.getState().getGroupFiles(board.activeFileGroupId);
-        const sketchFiles = groupFiles.map((f) => ({ name: f.name, content: f.content }));
+        const sketchFiles = groupFiles
+          .filter((f) => !chipProgramFiles.has(f.name) && !isChipProgramFile(f.name))
+          .map((f) => ({ name: f.name, content: f.content }));
 
         // Stream live cmake + ninja output per-board (Compile-All flow).
         let lastStreamedLen = 0;
