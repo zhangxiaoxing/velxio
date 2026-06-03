@@ -2,6 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEditorStore, chipFileGroupId } from '../../store/useEditorStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
+import {
+  isProgrammableChip,
+  targetForChip,
+  DEFAULT_CHIP_PROGRAM_FILE,
+  DEFAULT_CHIP_PROGRAM_C,
+} from '../../services/romCompileService';
 import type { BoardKind } from '../../types/board';
 import { BOARD_KIND_LABELS } from '../../types/board';
 import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
@@ -281,28 +287,45 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
   const setActiveBoardId = useSimulatorStore((s) => s.setActiveBoardId);
   const components = useSimulatorStore((s) => s.components);
 
-  // Programmable custom-chips (those with a `programFile`) own a program the
-  // user can edit — a ROM source / C — shown as its own section below the
-  // boards. Behaviour/driver chips and predefined chips carry no programFile
-  // and don't appear here (they're edited in the chip designer).
+  // Programmable custom-chips (CPU emulators whose chip.json declares
+  // programTargets) own a program the user can edit — a ROM source / C —
+  // shown as its own section below the boards. Behaviour/driver chips and
+  // predefined chips declare no programTargets and don't appear here (they're
+  // edited in the chip designer).
   const programmableChips = components.filter(
-    (c) =>
-      c.metadataId === 'custom-chip' &&
-      String((c.properties as Record<string, unknown>)?.programFile ?? '').trim() !== '',
+    (c) => c.metadataId === 'custom-chip' && isProgrammableChip(c.properties as Record<string, unknown>),
   );
 
-  // Ensure each programmable chip has its editor group. loadExample seeds these
-  // from the example's files; this is the safety net for chips dropped onto the
-  // canvas (or older projects) — create an empty program file to edit.
+  // Ensure each programmable chip has an editable program AND its editor group.
+  // loadExample seeds groups from an example's files; THIS is the path for a
+  // chip dropped fresh from the gallery (and older projects): a fresh chip has
+  // no program yet, so seed a default program.c the user can edit and persist
+  // programFile/programTarget onto the component so Compile/Run can build it.
   useEffect(() => {
     const ed = useEditorStore.getState();
+    const updateComponent = useSimulatorStore.getState().updateComponent;
     for (const chip of programmableChips) {
       const gid = chipFileGroupId(chip.id);
       if (ed.fileGroups[gid]) continue;
-      const pf = String((chip.properties as Record<string, unknown>).programFile ?? '').trim();
-      if (!pf) continue;
-      const seed = String((chip.properties as Record<string, unknown>).programSource ?? '');
-      ed.createFileGroup(gid, [{ name: pf, content: seed }]);
+      const props = chip.properties as Record<string, unknown>;
+      const existing = String(props.programFile ?? '').trim();
+      if (existing) {
+        // Chip already names its program (e.g. an example) — seed from its
+        // saved source if any, else empty (loadExample usually filled it).
+        ed.createFileGroup(gid, [
+          { name: existing, content: String(props.programSource ?? '') },
+        ]);
+      } else {
+        // Fresh chip from the gallery — give it a starter program.c and
+        // remember its target CPU for the ROM compiler.
+        const target = targetForChip(String(props.chipJson ?? '{}'));
+        updateComponent(chip.id, {
+          properties: { ...props, programFile: DEFAULT_CHIP_PROGRAM_FILE, programTarget: target },
+        });
+        ed.createFileGroup(gid, [
+          { name: DEFAULT_CHIP_PROGRAM_FILE, content: DEFAULT_CHIP_PROGRAM_C },
+        ]);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [components]);

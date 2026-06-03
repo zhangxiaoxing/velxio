@@ -80,3 +80,68 @@ export function targetForChip(chipJsonStr: string): RomTarget {
   } catch { /* ignore */ }
   return '8080';
 }
+
+/**
+ * A custom chip is "programmable" — it runs a user program / ROM, like a CPU
+ * emulator — when its chip.json declares `programTargets`, or it already
+ * references a program file. Behaviour / driver chips (a servo driver, a
+ * sensor) declare no programTargets and are edited only in the chip designer.
+ *
+ * This (not `programFile`) is the canonical predicate: a chip dropped fresh
+ * from the gallery has an empty programFile until we seed one, but its
+ * chip.json already says it's a CPU.
+ */
+export function isProgrammableChip(
+  props: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!props) return false;
+  if (String(props.programFile ?? '').trim()) return true;
+  try {
+    const obj = JSON.parse(String(props.chipJson ?? '{}'));
+    return Array.isArray(obj.programTargets) && obj.programTargets.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Default editable program file name for a freshly-added programmable chip.
+ *  We seed C — SDCC compiles it to the chip's CPU (z80 / 8080 / ...). */
+export const DEFAULT_CHIP_PROGRAM_FILE = 'program.c';
+
+/**
+ * Starter C program seeded into a newly-added programmable chip's editor
+ * group, so the chip has an editable program from the moment it lands on the
+ * canvas. Walks a single LED across the 8 memory-mapped outputs — it compiles
+ * and does something visible on Run. Mirrors the working chaser.c idiom
+ * (volatile MMIO pointer + nop-based delay; SDCC treats plain `char` as
+ * unsigned on these CPUs, so the pattern uses an explicit unsigned byte).
+ */
+export const DEFAULT_CHIP_PROGRAM_C = `/* Program for the programmable CPU chip — compiled by SDCC and loaded as the
+ * chip's ROM. Memory-mapped I/O matches the z80-cpu / i8080-cpu map:
+ *
+ *     0xC000  LED_OUT   write: bit i drives output pin LEDi
+ *     0xC003  BTN_IN    read:  bit i reads input pin BTNi
+ *
+ * Edit this and click Run. (Rename to .s to write assembly instead.)
+ */
+#define LED_OUT  (*(volatile unsigned char *)0xC000)
+#define BTN_IN   (*(volatile unsigned char *)0xC003)
+
+static void delay(unsigned int loops) {
+    while (loops--) {
+        __asm
+        nop
+        __endasm;
+    }
+}
+
+void main(void) {
+    unsigned char bit = 0x01;
+    while (1) {
+        LED_OUT = bit;             /* light one LED */
+        delay(5000);
+        bit <<= 1;                 /* walk it left */
+        if (bit == 0) bit = 0x01;  /* wrap around */
+    }
+}
+`;

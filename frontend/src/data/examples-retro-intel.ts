@@ -33,7 +33,7 @@ const chaserZ80C = `/* LED chaser written in C, compiled to Z80 by SDCC.
  *
  * Demonstrates that you can program the Z80 chip in C (not just asm).
  * The backend runs:
- *     sdcc -mz80 --code-loc 0x100 --data-loc 0x8000 program.c
+ *     sdcc -mz80 --data-loc 0x8000 program.c
  * and feeds the resulting Intel HEX into the chip via vx_rom_read.
  *
  * The MMIO addresses (0xC000 LED, 0xC003 BTN, 0xC001 UART_DATA,
@@ -75,21 +75,6 @@ void main(void) {
         }
     }
 }
-`;
-
-const chaserZ80CSketch = `// Z80 LED chaser — the program is written in C (chaser.c) and compiled to
-// the Z80 by SDCC on the backend.
-//
-// Just click Run. Velxio does the rest automatically:
-//   1. compiles the z80-cpu chip's C source to WASM,
-//   2. compiles chaser.c to a Z80 ROM (sdcc -mz80) and loads it into the chip,
-//   3. compiles this (empty) Arduino sketch and starts the simulation.
-// A single LED then walks back and forth across the 8 outputs.
-//
-// Want to change the animation? Edit chaser.c and hit Run again.
-
-void setup() {}
-void loop() {}
 `;
 
 const larsonZ80Asm = `; Larson Scanner / Knight Rider in Z80 assembly.
@@ -554,28 +539,37 @@ export const retroIntelExamples: ExampleProject[] = [
     ],
   },
 
-  // ── Z80 LED chaser in C (SDCC) ─────────────────────────────────────
+  // ── Z80 LED chaser in C (SDCC) — NO board, regulated supply ─────────
+  // The Z80 program is written in C (chaser.c) and compiled by SDCC. No
+  // Arduino: the chip is powered by a regulated bench supply, same as
+  // z80-larson-no-board. Board-less (boardFilter: 'digital'); chaser.c is
+  // the chip's editable program (its own section in the file explorer).
   {
     id: 'z80-led-chaser-c',
-    title: 'Z80 LED Chaser (C via SDCC)',
+    title: 'Z80 LED Chaser in C (no board)',
     description:
-      'Same z80-cpu chip, but the program is written in C and compiled by SDCC at compile time. ' +
-      'A single LED walks back and forth Larson-style. Requires sdcc installed on the backend.',
+      'A programmable Z80 chip walks a single LED back and forth, Larson-style — but the ' +
+      'program is written in C (chaser.c) and compiled to the Z80 by SDCC. No Arduino: the ' +
+      'chip runs standalone, powered by a regulated supply. Click Run. Requires sdcc on the backend.',
     category: 'circuits',
     difficulty: 'advanced',
-    boardType: 'arduino-uno',
-    tags: ['retro', 'z80', 'zilog', 'cpu', 'leds', 'larson', 'c', 'sdcc', 'wasm', 'custom-chip', 'programmable'],
-    code: chaserZ80CSketch,
-    files: [
-      { name: 'sketch.ino', content: chaserZ80CSketch },
-      { name: 'chaser.c',   content: chaserZ80C },
-    ],
+    boardFilter: 'digital',
+    tags: ['retro', 'z80', 'zilog', 'cpu', 'leds', 'larson', 'c', 'sdcc', 'no-board', 'power-supply', 'wasm', 'custom-chip', 'spice', 'programmable'],
+    code: chaserZ80C,
+    files: [{ name: 'chaser.c', content: chaserZ80C }],
     components: [
+      {
+        type: 'power-supply',
+        id: 'psu',
+        x: 180,
+        y: 200,
+        properties: { mode: 'dc', voltage: 5, currentLimit: 2, frequency: 50 },
+      },
       {
         type: 'custom-chip',
         id: 'z80cpu',
-        x: 380,
-        y: 120,
+        x: 440,
+        y: 150,
         properties: {
           chipName: 'Z80 CPU (programmable)',
           sourceC: z80CpuC,
@@ -587,38 +581,51 @@ export const retroIntelExamples: ExampleProject[] = [
         },
       },
       ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        type: 'wokwi-resistor',
+        id: `r-${i}`,
+        x: 760,
+        y: 110 + i * 50,
+        properties: { value: '220' },
+      })),
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
         type: 'wokwi-led',
         id: `led-${i}`,
-        x: 700 + i * 50,
-        y: 120,
+        x: 900,
+        y: 110 + i * 50,
         properties: { color: 'red' },
       })),
     ],
     wires: [
+      {
+        id: 'psu-vcc',
+        start: { componentId: 'psu', pinName: 'SIG' },
+        end: { componentId: 'z80cpu', pinName: 'VCC' },
+        color: '#e74c3c',
+      },
+      {
+        id: 'psu-gnd',
+        start: { componentId: 'psu', pinName: 'GND' },
+        end: { componentId: 'z80cpu', pinName: 'GND' },
+        color: '#000000',
+      },
       ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
-        id: `wire-led-${i}`,
+        id: `w-led-${i}`,
         start: { componentId: 'z80cpu', pinName: `LED${i}` },
+        end: { componentId: `r-${i}`, pinName: '1' },
+        color: '#facc15',
+      })),
+      ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
+        id: `w-r-${i}`,
+        start: { componentId: `r-${i}`, pinName: '2' },
         end: { componentId: `led-${i}`, pinName: 'A' },
         color: '#facc15',
       })),
       ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
-        id: `wire-led-${i}-gnd`,
+        id: `w-gnd-${i}`,
         start: { componentId: `led-${i}`, pinName: 'C' },
-        end: { componentId: 'arduino-uno', pinName: 'GND' },
+        end: { componentId: 'psu', pinName: 'GND' },
         color: '#000000',
       })),
-      {
-        id: 'wire-z80c-vcc',
-        start: { componentId: 'z80cpu', pinName: 'VCC' },
-        end: { componentId: 'arduino-uno', pinName: '5V' },
-        color: '#e74c3c',
-      },
-      {
-        id: 'wire-z80c-gnd',
-        start: { componentId: 'z80cpu', pinName: 'GND' },
-        end: { componentId: 'arduino-uno', pinName: 'GND' },
-        color: '#000000',
-      },
     ],
   },
 
