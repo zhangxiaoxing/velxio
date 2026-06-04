@@ -5,7 +5,37 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { CompilationLog } from '../../utils/compilationLogger';
+import type { CompilationLog, CompileTarget } from '../../utils/compilationLogger';
+
+/** One contiguous run of log lines for the same target (or none). */
+interface LogGroup {
+  target?: CompileTarget;
+  entries: { log: CompilationLog; index: number }[];
+}
+
+/** Group consecutive log lines by target so the console renders a section per
+ *  board/chip. Consecutive-run (not collapse-all) preserves chronological order
+ *  — a leading "Compiling all targets" and a trailing "Done" stay where they
+ *  are, around the per-target sections. */
+function groupLogs(logs: CompilationLog[]): LogGroup[] {
+  const groups: LogGroup[] = [];
+  logs.forEach((log, index) => {
+    const last = groups[groups.length - 1];
+    if (last && (last.target?.id ?? null) === (log.target?.id ?? null)) {
+      last.entries.push({ log, index });
+    } else {
+      groups.push({ target: log.target, entries: [{ log, index }] });
+    }
+  });
+  return groups;
+}
+
+/** A target section's overall outcome, derived from its lines. */
+function groupStatus(entries: LogGroup['entries']): 'error' | 'success' | 'running' {
+  if (entries.some((e) => e.log.type === 'error')) return 'error';
+  if (entries.some((e) => e.log.type === 'success')) return 'success';
+  return 'running';
+}
 
 interface CompilationConsoleProps {
   isOpen: boolean;
@@ -154,32 +184,64 @@ export const CompilationConsole: React.FC<CompilationConsoleProps> = ({
         </div>
       </div>
 
-      {/* Output content */}
+      {/* Output content — grouped into a section per board/chip target. */}
       <div ref={outputRef} style={styles.output}>
         {filteredLogs.length === 0 ? (
           <div style={styles.emptyState}>{t('editor.console.empty')}</div>
         ) : (
-          filteredLogs.map((log, i) => (
-            <div key={i} style={styles.logLine}>
-              <span style={styles.timestamp}>
-                {log.timestamp.toLocaleTimeString('en-US', {
-                  hour12: false,
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                })}
-              </span>
-              <span style={{ ...styles.logMessage, color: logColor(log.type) }}>
-                {log.type === 'core-install' && <span style={styles.coreTag}>CORE </span>}
-                {log.message}
-              </span>
-            </div>
-          ))
+          groupLogs(filteredLogs).map((group, gi) =>
+            group.target ? (
+              <div key={`g-${gi}`} style={styles.targetGroup}>
+                <div style={styles.targetHeader}>
+                  <span
+                    style={{ ...styles.targetStatus, color: statusColor(groupStatus(group.entries)) }}
+                  >
+                    {statusGlyph(groupStatus(group.entries))}
+                  </span>
+                  <span style={styles.targetLabel}>{group.target.label}</span>
+                  <span style={styles.targetKind}>{group.target.kind}</span>
+                </div>
+                <div style={styles.targetBody}>
+                  {group.entries.map(({ log, index }) => (
+                    <LogLine key={index} log={log} />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              // No target — plain narration ("Compiling all targets...", "Done").
+              group.entries.map(({ log, index }) => <LogLine key={index} log={log} />)
+            ),
+          )
         )}
       </div>
     </div>
   );
 };
+
+const LogLine: React.FC<{ log: CompilationLog }> = ({ log }) => (
+  <div style={styles.logLine}>
+    <span style={styles.timestamp}>
+      {log.timestamp.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })}
+    </span>
+    <span style={{ ...styles.logMessage, color: logColor(log.type) }}>
+      {log.type === 'core-install' && <span style={styles.coreTag}>CORE </span>}
+      {log.message}
+    </span>
+  </div>
+);
+
+function statusColor(status: 'error' | 'success' | 'running'): string {
+  return status === 'error' ? '#ef5350' : status === 'success' ? '#66bb6a' : '#9aa0a6';
+}
+
+function statusGlyph(status: 'error' | 'success' | 'running'): string {
+  return status === 'error' ? '✕' : status === 'success' ? '✓' : '▸';
+}
 
 function logColor(type: CompilationLog['type']): string {
   switch (type) {
@@ -300,6 +362,40 @@ const styles: Record<string, React.CSSProperties> = {
     fontStyle: 'italic',
     padding: '12px 0',
     fontFamily: 'system-ui, sans-serif',
+  },
+  targetGroup: {
+    marginTop: 6,
+    borderLeft: '2px solid #3a3a3a',
+    paddingLeft: 8,
+  },
+  targetHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    padding: '1px 0 2px',
+  },
+  targetStatus: {
+    fontWeight: 700,
+    flexShrink: 0,
+  },
+  targetLabel: {
+    color: '#e0e0e0',
+    fontWeight: 700,
+    fontSize: 11.5,
+    fontFamily: 'system-ui, sans-serif',
+  },
+  targetKind: {
+    color: '#777',
+    fontSize: 9,
+    fontFamily: 'system-ui, sans-serif',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    border: '1px solid #3a3a3a',
+    borderRadius: 3,
+    padding: '0 4px',
+  },
+  targetBody: {
+    paddingLeft: 4,
   },
   logLine: {
     display: 'flex',

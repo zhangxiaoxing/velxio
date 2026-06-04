@@ -25,7 +25,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { LibraryManagerModal } from '../simulator/LibraryManagerModal';
 import { InstallLibrariesModal } from '../simulator/InstallLibrariesModal';
 import { parseCompileResult } from '../../utils/compilationLogger';
-import type { CompilationLog } from '../../utils/compilationLogger';
+import type { CompilationLog, CompileTarget } from '../../utils/compilationLogger';
 import { exportToWokwiZip } from '../../utils/wokwiZip';
 import { importProjectFile, PROJECT_FILE_ACCEPT } from '../../utils/importProject';
 import { readFirmwareFile } from '../../utils/firmwareLoader';
@@ -287,38 +287,33 @@ export const EditorToolbar = ({
         const sourceC = String(props.sourceC ?? '');
         const chipJson = String(props.chipJson ?? '{}');
         let changed = false;
+        // Stamp every line for this chip with its target so the console groups
+        // it under its own section (alongside the boards).
+        const chipTarget: CompileTarget = { id: chip.id, label: chipLabel, kind: 'chip' };
+        const clog = (type: CompilationLog['type'], message: string) =>
+          addLog({ timestamp: new Date(), type, message, target: chipTarget });
 
         // 1. C -> WASM. Only when missing — the chip designer fills this too.
         if (!String(props.wasmBase64 ?? '') && sourceC) {
-          addLog({
-            timestamp: new Date(),
-            type: 'info',
-            message: `Compiling chip "${chipLabel}" to WASM...`,
-          });
+          clog('info', `Compiling chip "${chipLabel}" to WASM...`);
           try {
             const r = await compileChip(sourceC, chipJson);
             if (r.success && r.wasm_base64) {
               props.wasmBase64 = r.wasm_base64;
               changed = true;
-              addLog({
-                timestamp: new Date(),
-                type: 'success',
-                message: `Chip "${chipLabel}" compiled (${r.byte_size} B WASM).`,
-              });
+              clog('success', `Chip "${chipLabel}" compiled (${r.byte_size} B WASM).`);
             } else {
-              addLog({
-                timestamp: new Date(),
-                type: 'error',
-                message: `Chip "${chipLabel}" WASM compile failed: ${r.error || r.stderr || 'unknown error'}`,
-              });
+              clog(
+                'error',
+                `Chip "${chipLabel}" WASM compile failed: ${r.error || r.stderr || 'unknown error'}`,
+              );
               failed++;
             }
           } catch (e) {
-            addLog({
-              timestamp: new Date(),
-              type: 'error',
-              message: `Chip "${chipLabel}" WASM compile error: ${e instanceof Error ? e.message : String(e)}`,
-            });
+            clog(
+              'error',
+              `Chip "${chipLabel}" WASM compile error: ${e instanceof Error ? e.message : String(e)}`,
+            );
             failed++;
           }
         }
@@ -338,45 +333,34 @@ export const EditorToolbar = ({
             chipGroupFiles.find((f) => f.name === programFile) ??
             boardFiles.find((f) => f.name === programFile);
           if (!file) {
-            addLog({
-              timestamp: new Date(),
-              type: 'error',
-              message: `Chip "${chipLabel}": program file "${programFile}" not found in the chip's files.`,
-            });
+            clog('error', `Chip "${chipLabel}": program file "${programFile}" not found in the chip's files.`);
             failed++;
           } else {
             const target = targetForChip(chipJson);
             const fmt = formatForFile(programFile);
-            addLog({
-              timestamp: new Date(),
-              type: 'info',
-              message: `Assembling "${programFile}" (target=${target}, format=${fmt}) for chip "${chipLabel}"...`,
-            });
+            clog(
+              'info',
+              `Assembling "${programFile}" (target=${target}, format=${fmt}) for chip "${chipLabel}"...`,
+            );
             try {
               const rr = await compileRom(file.content, target, fmt);
               if (rr.success && rr.rom_base64) {
                 props.romBytes = rr.rom_base64;
                 props.programFile = programFile;
                 changed = true;
-                addLog({
-                  timestamp: new Date(),
-                  type: 'success',
-                  message: `ROM ready: ${rr.byte_size} B injected into "${chipLabel}".`,
-                });
+                clog('success', `ROM ready: ${rr.byte_size} B injected into "${chipLabel}".`);
               } else {
-                addLog({
-                  timestamp: new Date(),
-                  type: 'error',
-                  message: `ROM compile failed for "${programFile}": ${rr.error || rr.stderr || 'unknown error'}`,
-                });
+                clog(
+                  'error',
+                  `ROM compile failed for "${programFile}": ${rr.error || rr.stderr || 'unknown error'}`,
+                );
                 failed++;
               }
             } catch (e) {
-              addLog({
-                timestamp: new Date(),
-                type: 'error',
-                message: `ROM compile error for "${programFile}": ${e instanceof Error ? e.message : String(e)}`,
-              });
+              clog(
+                'error',
+                `ROM compile error for "${programFile}": ${e instanceof Error ? e.message : String(e)}`,
+              );
               failed++;
             }
           }
@@ -432,14 +416,18 @@ export const EditorToolbar = ({
     // ── End custom-chip preparation ─────────────────────────────────────
 
     const kind = activeBoard?.boardKind;
+    // The active board's console target, defined up front so EVERY board path
+    // (Pi, MicroPython, arduino-cli, errors) groups its lines under one section.
+    const boardLabel = activeBoard ? boardDisplayName(activeBoard) : 'Unknown';
+    const boardTarget: CompileTarget | undefined = activeBoardId
+      ? { id: activeBoardId, label: boardLabel, kind: 'board' }
+      : undefined;
+    const blog = (type: CompilationLog['type'], message: string) =>
+      addLog({ timestamp: new Date(), type, message, target: boardTarget });
 
     // Raspberry Pi 3B doesn't need arduino-cli compilation
     if (isPiBoardKind(kind)) {
-      addLog({
-        timestamp: new Date(),
-        type: 'info',
-        message: 'Raspberry Pi 3B: no compilation needed — run Python scripts directly.',
-      });
+      blog('info', 'Raspberry Pi 3B: no compilation needed — run Python scripts directly.');
       setMessage({ type: 'success', text: 'Ready (no compilation needed)' });
       setCompiling(false);
       return;
@@ -447,24 +435,16 @@ export const EditorToolbar = ({
 
     // MicroPython mode — no backend compilation needed
     if (activeBoard?.languageMode === 'micropython' && activeBoardId) {
-      addLog({
-        timestamp: new Date(),
-        type: 'info',
-        message: 'MicroPython: loading firmware and user files...',
-      });
+      blog('info', 'MicroPython: loading firmware and user files...');
       try {
         const groupFiles = useEditorStore.getState().getGroupFiles(activeBoard.activeFileGroupId);
         const pyFiles = groupFiles.map((f) => ({ name: f.name, content: f.content }));
         await loadMicroPythonProgram(activeBoardId, pyFiles);
-        addLog({
-          timestamp: new Date(),
-          type: 'success',
-          message: 'MicroPython firmware loaded successfully',
-        });
+        blog('success', 'MicroPython firmware loaded successfully');
         setMessage({ type: 'success', text: 'MicroPython ready' });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : 'Failed to load MicroPython';
-        addLog({ timestamp: new Date(), type: 'error', message: errMsg });
+        blog('error', errMsg);
         setMessage({ type: 'error', text: errMsg });
       } finally {
         setCompiling(false);
@@ -473,20 +453,15 @@ export const EditorToolbar = ({
     }
 
     const fqbn = kind ? BOARD_KIND_FQBN[kind] : null;
-    const boardLabel = activeBoard ? boardDisplayName(activeBoard) : 'Unknown';
 
     if (!fqbn) {
-      addLog({ timestamp: new Date(), type: 'error', message: `No FQBN for board kind: ${kind}` });
+      blog('error', `No FQBN for board kind: ${kind}`);
       setMessage({ type: 'error', text: 'Unknown board' });
       setCompiling(false);
       return;
     }
 
-    addLog({
-      timestamp: new Date(),
-      type: 'info',
-      message: `Starting compilation for ${boardLabel} (${fqbn})...`,
-    });
+    blog('info', `Starting compilation for ${boardLabel} (${fqbn})...`);
 
     try {
       const groupFiles = activeBoard?.activeFileGroupId
@@ -524,6 +499,7 @@ export const EditorToolbar = ({
               timestamp: now,
               type: 'info' as const,
               message: line,
+              target: boardTarget,
             })),
           ]);
         },
@@ -539,7 +515,7 @@ export const EditorToolbar = ({
       // the live stream — parseCompileResult highlights FAILED blocks and
       // tags compiler errors with type='error', which the console uses for
       // colour + the auto-switch-to-errors filter.
-      const resultLogs = parseCompileResult(result, boardLabel);
+      const resultLogs = parseCompileResult(result, boardLabel, boardTarget);
       setCompileLogs((prev: CompilationLog[]) => [...prev, ...resultLogs]);
 
       if (result.success) {
@@ -571,7 +547,7 @@ export const EditorToolbar = ({
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Compile failed';
-      addLog({ timestamp: new Date(), type: 'error', message: errMsg });
+      blog('error', errMsg);
       setMessage({ type: 'error', text: errMsg });
     } finally {
       setCompiling(false);
@@ -747,23 +723,22 @@ export const EditorToolbar = ({
 
         setCompiling(true);
         setMessage(null);
-        addLog({
-          timestamp: new Date(),
-          type: 'info',
-          message: 'MicroPython: loading firmware and user files...',
-        });
+        const mpyTarget: CompileTarget = {
+          id: activeBoardId,
+          label: boardDisplayName(board),
+          kind: 'board',
+        };
+        const mlog = (type: CompilationLog['type'], message: string) =>
+          addLog({ timestamp: new Date(), type, message, target: mpyTarget });
+        mlog('info', 'MicroPython: loading firmware and user files...');
         try {
           const groupFiles = useEditorStore.getState().getGroupFiles(board.activeFileGroupId);
           const pyFiles = groupFiles.map((f) => ({ name: f.name, content: f.content }));
           await loadMicroPythonProgram(activeBoardId, pyFiles);
-          addLog({
-            timestamp: new Date(),
-            type: 'success',
-            message: 'MicroPython firmware loaded',
-          });
+          mlog('success', 'MicroPython firmware loaded');
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : 'Failed to load MicroPython';
-          addLog({ timestamp: new Date(), type: 'error', message: errMsg });
+          mlog('error', errMsg);
           setMessage({ type: 'error', text: errMsg });
           setCompiling(false);
           return;
@@ -955,29 +930,25 @@ export const EditorToolbar = ({
 
     for (const board of boardsList) {
       const label = boardDisplayName(board);
+      // Stamp this board's lines so the console groups them under its section.
+      const boardTarget: CompileTarget = { id: board.id, label, kind: 'board' };
+      const blog = (type: CompilationLog['type'], message: string) =>
+        addLog({ timestamp: new Date(), type, message, target: boardTarget });
 
       if (isPiBoardKind(board.boardKind)) {
-        addLog({
-          timestamp: new Date(),
-          type: 'info',
-          message: `${label}: skipped (no compilation needed)`,
-        });
+        blog('info', 'skipped (no compilation needed)');
         ok++;
         continue;
       }
 
       const fqbn = BOARD_KIND_FQBN[board.boardKind];
       if (!fqbn) {
-        addLog({
-          timestamp: new Date(),
-          type: 'error',
-          message: `${label}: no FQBN configured`,
-        });
+        blog('error', 'no FQBN configured');
         boardFailed++;
         continue;
       }
 
-      addLog({ timestamp: new Date(), type: 'info', message: `${label}: compiling...` });
+      blog('info', 'compiling...');
 
       try {
         const groupFiles = useEditorStore.getState().getGroupFiles(board.activeFileGroupId);
@@ -1000,17 +971,19 @@ export const EditorToolbar = ({
             const now = new Date();
             setCompileLogs((prev: CompilationLog[]) => [
               ...prev,
+              // No `${label}: ` prefix — the target section header carries it.
               ...newLines.map((line) => ({
                 timestamp: now,
                 type: 'info' as const,
-                message: `${label}: ${line}`,
+                message: line,
+                target: boardTarget,
               })),
             ]);
           },
           { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles },
         );
 
-        const resultLogs = parseCompileResult(result, label);
+        const resultLogs = parseCompileResult(result, label, boardTarget);
         setCompileLogs((prev: CompilationLog[]) => [...prev, ...resultLogs]);
 
         if (result.success) {
@@ -1026,11 +999,7 @@ export const EditorToolbar = ({
           boardFailed++;
         }
       } catch (err) {
-        addLog({
-          timestamp: new Date(),
-          type: 'error',
-          message: `${label}: ${err instanceof Error ? err.message : String(err)}`,
-        });
+        blog('error', err instanceof Error ? err.message : String(err));
         boardFailed++;
       }
     }
