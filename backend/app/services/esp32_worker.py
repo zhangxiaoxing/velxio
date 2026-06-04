@@ -1773,9 +1773,10 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                             on_flush=_flush_factory_rt(),
                         )
                     else:
+                        _is_bwr = 'bwr' in str(cmd.get('panel_kind', '')).lower()
                         slave = _Ssd168xEpaperSlave(
                             component_id=comp_id, width=width, height=height,
-                            on_flush=_flush_factory_rt(),
+                            on_flush=_flush_factory_rt(), is_bwr=_is_bwr,
                         )
                     state = {
                         'slave': slave,

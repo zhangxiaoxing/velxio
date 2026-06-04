@@ -242,6 +242,7 @@ const epaperSimulation = {
           : new SSD168xDecoder({
               width: cfg.width,
               height: cfg.height,
+              palette: cfg.palette,
               onFlush: (frame) => {
                 scheduleFlush(frame);
                 pulseBusy(refreshMs);

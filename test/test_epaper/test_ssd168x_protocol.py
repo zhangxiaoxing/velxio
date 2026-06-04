@@ -182,7 +182,8 @@ class TestFrameLatchAndCompose:
         )
 
     def test_red_plane_wins_over_black(self):
-        d = SSD168xDecoder(width=8, height=2)   # tiny 1-byte-wide panel
+        # Tri-colour panel: 0x26 is the additive red plane (red wins on compose).
+        d = SSD168xDecoder(width=8, height=2, is_bwr=True)   # tiny 1-byte-wide panel
         # Black plane: row 0 all-black (0x00), row 1 all-white (0xFF)
         feed_all(d, cmd(CMD_WRITE_BLACK_VRAM), data(0x00, 0xFF))
         # Red plane: row 0 first 4 px red (0xF0), row 1 nothing (0x00)

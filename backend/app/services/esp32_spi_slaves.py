@@ -82,6 +82,15 @@ class Ssd168xEpaperSlave:
     _y: int = 0
     _xrange: tuple = (0, 0)
     _yrange: tuple = (0, 0)
+    # UNION of every RAM window set since the last flush — paged drivers set one
+    # partial window per page, so compose must use the union (full native area),
+    # not just the last page's strip.
+    _win_x0: int = 0
+    _win_x1: int = 0
+    _win_y0: int = 0
+    _win_y1: int = 0
+    _win_x_set: bool = False
+    _win_y_set: bool = False
     _entry_mode: int = 0x03
     refreshed_count: int = 0
     unknown_cmds: List[int] = field(default_factory=list)
@@ -96,8 +105,11 @@ class Ssd168xEpaperSlave:
         # B/W panel: 0x26 is a second mono plane → init white. B/W/R panel:
         # 0x26 is the additive red plane → init "no red" (0x00).
         self.red_ram = bytearray([0x00 if self.is_bwr else 0xFF] * n)
-        self._xrange = (0, self._ram_bpr - 1)
-        self._yrange = (0, self._ram_rows - 1)
+        # Default active window = DISPLAY geometry (the firmware overrides via
+        # 0x44/0x45 before writing). RAM is sized larger; until a window is set
+        # the panel is treated as un-rotated display-sized.
+        self._xrange = (0, (self.width + 7) // 8 - 1)
+        self._yrange = (0, self.height - 1)
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -117,6 +129,11 @@ class Ssd168xEpaperSlave:
         self._ram_target = "bw"
         self._x_byte = 0
         self._y = 0
+        self._entry_mode = 0x03
+        self._xrange = (0, (self.width + 7) // 8 - 1)
+        self._yrange = (0, self.height - 1)
+        self._win_x_set = False
+        self._win_y_set = False
         self.in_deep_sleep = False
 
     def compose_frame(self) -> Frame:
@@ -125,8 +142,16 @@ class Ssd168xEpaperSlave:
         # orientation. Handles panels driven with setRotation() whose native
         # RAM (e.g. 128x296) is the transpose of the display (296x128); the old
         # code assumed display==native and dropped half the rows.
-        x0, x1 = self._xrange
-        y0, y1 = self._yrange
+        # Use the UNION of windows set this frame (paged drivers set one partial
+        # window per page); fall back to the display geometry if none was set.
+        if self._win_x_set:
+            x0, x1 = self._win_x0, self._win_x1
+        else:
+            x0, x1 = 0, (self.width + 7) // 8 - 1
+        if self._win_y_set:
+            y0, y1 = self._win_y0, self._win_y1
+        else:
+            y0, y1 = 0, self.height - 1
         nw_bytes = max(0, x1 - x0 + 1)
         nw = nw_bytes * 8            # native width (px)
         nh = max(0, y1 - y0 + 1)     # native height (rows)
@@ -152,33 +177,44 @@ class Ssd168xEpaperSlave:
                         # so a pixel is white only if BOTH planes say white.
                         native[out_row + x] = 1 if (bw_white and (r_byte & mask)) else 0
 
+        # Map native -> display. `nw` is byte-padded (nw_bytes*8) so it can
+        # exceed the real native width when that isn't a multiple of 8 (e.g.
+        # the 2.13" panel is 122 px wide -> nw=128). Detect orientation by BYTE
+        # width and crop the padding using the true native width.
         W, H = self.width, self.height
-        if (nw, nh) == (W, H):
-            pixels = native
-        elif (nw, nh) == (H, W) and nw and nh:
-            # 90° rotation (firmware used setRotation(1): native RAM is the
-            # rotated buffer). Inverse of Adafruit_GFX rotation 1:
-            #   logical(x,y) -> native(x_raw=Wn-1-y, y_raw=x)
-            # so native(x_raw, y_raw) -> display(xd=y_raw, yd=Wn-1-x_raw),
-            # where Wn = native width = nw. Verified visually (text upright).
+        Wb = (W + 7) // 8
+        Hb = (H + 7) // 8
+        if nh == H and nw_bytes == Wb:
+            # Non-transposed (rotation 0): native actual width = W.
+            if nw == W:
+                pixels = native
+            else:
+                pixels = bytearray([1]) * (W * H)
+                for ny in range(H):
+                    s = ny * nw
+                    d = ny * W
+                    for x in range(W):
+                        pixels[d + x] = native[s + x]
+        elif nh == W and nw_bytes == Hb and nh:
+            # Transposed (rotation 1): native actual width = H. Inverse of
+            # Adafruit_GFX rotation 1: native(x_raw,y_raw) -> display(xd=y_raw,
+            # yd=Wn-1-x_raw), Wn = true native width = H.
             pixels = bytearray([1]) * (W * H)
-            for ny in range(nh):       # ny = y_raw  (0..nh-1)
+            wn = H
+            for ny in range(nh):       # ny = y_raw  (0..W-1)
+                if ny >= W:
+                    break
                 src = ny * nw
-                xd = ny
-                if not (0 <= xd < W):
-                    continue
-                for x in range(nw):    # x = x_raw  (0..nw-1)
-                    yd = (nw - 1) - x
-                    if 0 <= yd < H:
-                        pixels[yd * W + xd] = native[src + x]
+                for x in range(wn):    # x = x_raw  (0..H-1, true native width)
+                    pixels[(wn - 1 - x) * W + ny] = native[src + x]
         else:
             # Unexpected geometry — best-effort top-left copy onto white.
             pixels = bytearray([1]) * (W * H)
             for ny in range(min(nh, H)):
-                src = ny * nw
-                dst = ny * W
+                s = ny * nw
+                d = ny * W
                 for x in range(min(nw, W)):
-                    pixels[dst + x] = native[src + x]
+                    pixels[d + x] = native[s + x]
         return Frame(W, H, bytes(pixels))
 
     def compose_frame_b64(self) -> str:
@@ -197,6 +233,9 @@ class Ssd168xEpaperSlave:
         if cmd == CMD_MASTER_ACTIVATION:
             self.refreshed_count += 1
             frame = self.compose_frame()
+            # Start a fresh window union for the next frame's pages.
+            self._win_x_set = False
+            self._win_y_set = False
             if self.on_flush:
                 try:
                     self.on_flush(frame)
@@ -233,10 +272,22 @@ class Ssd168xEpaperSlave:
         elif cmd == CMD_SET_RAMX_RANGE and len(params) == 2:
             self._xrange = (params[0], params[1])
             self._x_byte = params[0]
+            if not self._win_x_set:
+                self._win_x0, self._win_x1 = params[0], params[1]
+                self._win_x_set = True
+            else:
+                self._win_x0 = min(self._win_x0, params[0])
+                self._win_x1 = max(self._win_x1, params[1])
         elif cmd == CMD_SET_RAMY_RANGE and len(params) == 4:
             self._yrange = (params[0] | (params[1] << 8),
                             params[2] | (params[3] << 8))
             self._y = self._yrange[0]
+            if not self._win_y_set:
+                self._win_y0, self._win_y1 = self._yrange
+                self._win_y_set = True
+            else:
+                self._win_y0 = min(self._win_y0, self._yrange[0])
+                self._win_y1 = max(self._win_y1, self._yrange[1])
         elif cmd == CMD_SET_RAMX_COUNTER and len(params) == 1:
             self._x_byte = byte
         elif cmd == CMD_SET_RAMY_COUNTER and len(params) == 2:

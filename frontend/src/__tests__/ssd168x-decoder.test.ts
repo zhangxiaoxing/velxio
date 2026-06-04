@@ -176,7 +176,7 @@ describe('SSD168xDecoder — frame latch & compose', () => {
   });
 
   it('red plane wins over black on compose', () => {
-    const d = new SSD168xDecoder({ width: 8, height: 2 });
+    const d = new SSD168xDecoder({ width: 8, height: 2, palette: 'bwr' });
     // Row 0 all-black, Row 1 all-white
     feedAll(d, cmd(CMD_WRITE_BLACK_VRAM), data(0x00, 0xff));
     // Reset cursors then write red plane: row 0 first 4 px red, row 1 nothing
@@ -239,6 +239,7 @@ describe('SSD168xDecoder — tri-colour B/W/R pipeline', () => {
     const d = new SSD168xDecoder({
       width: 16,
       height: 3,
+      palette: 'bwr',
       onFlush: (f) => seen.push(f),
     });
 
@@ -302,6 +303,7 @@ describe('SSD168xDecoder — tri-colour B/W/R pipeline', () => {
     const d = new SSD168xDecoder({
       width: 8,
       height: 1,
+      palette: 'bwr',
       onFlush: (f) => seen.push(f),
     });
     feedAll(

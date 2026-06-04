@@ -56,6 +56,13 @@ export interface Frame {
 export interface SSD168xDecoderOptions {
   width: number;
   height: number;
+  /**
+   * Visible palette. 'bwr' = tri-colour (0x26 is the additive red plane,
+   * red wins on compose). 'bw' (default) = mono; some controllers (e.g.
+   * GDEY029T94) mirror the image into the 0x26 plane, so a B/W panel is
+   * white only where BOTH planes say white. 'acep' is handled elsewhere.
+   */
+  palette?: 'bw' | 'bwr' | 'acep';
   /** Fired on every 0x20 MASTER_ACTIVATION with the latched composed frame. */
   onFlush?: (frame: Frame) => void;
 }
@@ -67,7 +74,16 @@ export interface SSD168xDecoderOptions {
 export class SSD168xDecoder {
   readonly width: number;
   readonly height: number;
-  private readonly bytesPerRow: number;
+  /** True for tri-colour B/W/Red panels. */
+  private readonly isBwr: boolean;
+  /**
+   * RAM geometry — sized to the LONGER side both ways so a rotated native
+   * layout (a 296x128 landscape panel whose controller RAM is 128x296) is
+   * captured without dropping rows. composeFrame() reads back the active
+   * window and rotates to the display orientation.
+   */
+  private readonly ramBpr: number;
+  private readonly ramRows: number;
 
   /** B/W RAM plane. 1 bit = 1 px. Bit value 1 = white, 0 = black. */
   bwRam: Uint8Array;
@@ -84,10 +100,21 @@ export class SSD168xDecoder {
   /** Current Y position (scanline). */
   private y = 0;
 
-  /** Active RAM window in bytes (start, end inclusive). */
+  /** Active RAM window in bytes (start, end inclusive) — the LAST one set,
+   *  used for the write cursor's auto-increment. */
   private xrange: [number, number] = [0, 0];
-  /** Active RAM window in scanlines (start, end inclusive). */
+  /** Active RAM window in scanlines (start, end inclusive) — last one set. */
   private yrange: [number, number] = [0, 0];
+
+  /** UNION of every RAM window set since the last flush — paged drivers
+   *  (GxEPD2 page height < panel) set one partial window per page, so compose
+   *  must use the union (full native area), not just the last page's strip. */
+  private winX0 = 0;
+  private winX1 = 0;
+  private winY0 = 0;
+  private winY1 = 0;
+  private winXSet = false;
+  private winYSet = false;
 
   /** Data-entry-mode register (0x11). Default = 0x03 (X+, Y+, X-first). */
   private entryMode = 0x03;
@@ -104,15 +131,23 @@ export class SSD168xDecoder {
   constructor(opts: SSD168xDecoderOptions) {
     this.width = opts.width;
     this.height = opts.height;
-    this.bytesPerRow = (opts.width + 7) >> 3;
+    this.isBwr = opts.palette === 'bwr';
+    const longSide = Math.max(opts.width, opts.height);
+    this.ramBpr = (longSide + 7) >> 3;
+    this.ramRows = longSide;
     this.onFlush = opts.onFlush;
 
-    const bwSize = this.bytesPerRow * this.height;
-    this.bwRam = new Uint8Array(bwSize).fill(0xff); // default white
-    this.redRam = new Uint8Array(bwSize).fill(0x00); // default no red
+    const size = this.ramBpr * this.ramRows;
+    this.bwRam = new Uint8Array(size).fill(0xff); // default white
+    // B/W panel: 0x26 is a second mono plane → init white. B/W/R panel:
+    // 0x26 is the additive red plane → init "no red" (0x00).
+    this.redRam = new Uint8Array(size).fill(this.isBwr ? 0x00 : 0xff);
 
-    this.xrange = [0, this.bytesPerRow - 1];
-    this.yrange = [0, this.height - 1];
+    // Default active window = DISPLAY geometry (the firmware overrides via
+    // 0x44/0x45 before writing). RAM is sized larger, but until a window is
+    // set the panel is treated as un-rotated display-sized.
+    this.xrange = [0, ((opts.width + 7) >> 3) - 1];
+    this.yrange = [0, opts.height - 1];
   }
 
   // ── Public API ─────────────────────────────────────────────────────
@@ -128,43 +163,108 @@ export class SSD168xDecoder {
   /** Clear all state — equivalent to a hardware RST low pulse. */
   reset(): void {
     this.bwRam.fill(0xff);
-    this.redRam.fill(0x00);
+    this.redRam.fill(this.isBwr ? 0x00 : 0xff);
     this.currentCmd = -1;
     this.params = [];
     this.ramTarget = 'bw';
     this.xByte = 0;
     this.y = 0;
     this.entryMode = 0x03;
-    this.xrange = [0, this.bytesPerRow - 1];
+    this.xrange = [0, ((this.width + 7) >> 3) - 1];
     this.yrange = [0, this.height - 1];
+    this.winXSet = false;
+    this.winYSet = false;
     this.inDeepSleep = false;
   }
 
   /**
-   * Build a Frame from the latched RAM planes. Composition rule:
-   *   red plane bit = 1 → RED  (wins over black)
-   *   bw plane bit = 1  → WHITE
-   *   else              → BLACK
-   * (Matches every SSD168x-driving Arduino library.)
+   * Build a Frame from the latched RAM planes.
+   *
+   * Compose in the controller's NATIVE geometry — the active RAM window the
+   * firmware actually wrote (set via 0x44/0x45) — then rotate to the display
+   * orientation. This handles panels driven with setRotation() whose native
+   * RAM (e.g. 128x296) is the transpose of the display (296x128); composing
+   * directly at the display dims would drop half the rows and never rotate.
+   *
+   * Composition: tri-colour → red wins, else B/W plane decides. B/W → white
+   * only if BOTH planes say white (the image may live in 0x24 or 0x26).
    */
   composeFrame(): Frame {
-    const out = new Uint8Array(this.width * this.height);
-    const bpr = this.bytesPerRow;
-    for (let y = 0; y < this.height; y++) {
-      for (let xb = 0; xb < bpr; xb++) {
-        const bByte = this.bwRam[y * bpr + xb];
-        const rByte = this.redRam[y * bpr + xb];
+    // Use the UNION of windows set this frame (paged drivers set one partial
+    // window per page); fall back to the display geometry if none was set.
+    const x0 = this.winXSet ? this.winX0 : 0;
+    const x1 = this.winXSet ? this.winX1 : ((this.width + 7) >> 3) - 1;
+    const y0 = this.winYSet ? this.winY0 : 0;
+    const y1 = this.winYSet ? this.winY1 : this.height - 1;
+    const nwBytes = Math.max(0, x1 - x0 + 1);
+    const nw = nwBytes * 8; // native width (px)
+    const nh = Math.max(0, y1 - y0 + 1); // native height (rows)
+    const native = new Uint8Array(nw * nh);
+    for (let ny = 0; ny < nh; ny++) {
+      const row = (y0 + ny) * this.ramBpr + x0;
+      const outRow = ny * nw;
+      for (let xb = 0; xb < nwBytes; xb++) {
+        const bByte = this.bwRam[row + xb];
+        const rByte = this.redRam[row + xb];
+        const base = xb << 3;
         for (let bit = 0; bit < 8; bit++) {
-          const x = (xb << 3) + bit;
-          if (x >= this.width) break;
+          const x = base + bit;
+          if (x >= nw) break;
           const mask = 0x80 >> bit;
-          const isRed = (rByte & mask) !== 0;
-          const isWhite = (bByte & mask) !== 0;
-          out[y * this.width + x] = isRed ? 2 : isWhite ? 1 : 0;
+          const bwWhite = (bByte & mask) !== 0;
+          if (this.isBwr) {
+            native[outRow + x] = (rByte & mask) !== 0 ? 2 : bwWhite ? 1 : 0;
+          } else {
+            native[outRow + x] = bwWhite && (rByte & mask) !== 0 ? 1 : 0;
+          }
         }
       }
     }
-    return { width: this.width, height: this.height, pixels: out };
+
+    // Map native -> display. `nw` is byte-padded (nwBytes*8) so it can exceed
+    // the real native width when that isn't a multiple of 8 (e.g. the 2.13"
+    // panel is 122 px wide -> nw=128). Detect orientation by BYTE width and
+    // crop the padding using the true native width.
+    const W = this.width;
+    const H = this.height;
+    const Wb = (W + 7) >> 3;
+    const Hb = (H + 7) >> 3;
+    let pixels: Uint8Array;
+    if (nh === H && nwBytes === Wb) {
+      // Non-transposed (rotation 0): native actual width = W.
+      if (nw === W) {
+        pixels = native;
+      } else {
+        pixels = new Uint8Array(W * H).fill(1);
+        for (let ny = 0; ny < H; ny++) {
+          const s = ny * nw;
+          const d = ny * W;
+          for (let x = 0; x < W; x++) pixels[d + x] = native[s + x];
+        }
+      }
+    } else if (nh === W && nwBytes === Hb && nh) {
+      // Transposed (rotation 1): native actual width = H. Inverse of
+      // Adafruit_GFX rotation 1: native(x_raw,y_raw) -> display(xd=y_raw,
+      // yd=Wn-1-x_raw), Wn = true native width = H.
+      pixels = new Uint8Array(W * H).fill(1);
+      const Wn = H;
+      for (let ny = 0; ny < nh; ny++) {
+        if (ny >= W) break;
+        const src = ny * nw;
+        for (let x = 0; x < Wn; x++) {
+          pixels[(Wn - 1 - x) * W + ny] = native[src + x];
+        }
+      }
+    } else {
+      // Unexpected geometry — best-effort top-left copy onto white.
+      pixels = new Uint8Array(W * H).fill(1);
+      for (let ny = 0; ny < Math.min(nh, H); ny++) {
+        const s = ny * nw;
+        const d = ny * W;
+        for (let x = 0; x < Math.min(nw, W); x++) pixels[d + x] = native[s + x];
+      }
+    }
+    return { width: W, height: H, pixels };
   }
 
   // ── Internal: command / data dispatch ──────────────────────────────
@@ -181,6 +281,9 @@ export class SSD168xDecoder {
         this.refreshedCount += 1;
         const frame = this.composeFrame();
         this.onFlush?.(frame);
+        // Start a fresh window union for the next frame's pages.
+        this.winXSet = false;
+        this.winYSet = false;
         return;
       }
       case CMD_WRITE_BLACK_VRAM:
@@ -225,12 +328,28 @@ export class SSD168xDecoder {
     } else if (cmd === CMD_SET_RAMX_RANGE && params.length === 2) {
       this.xrange = [params[0], params[1]];
       this.xByte = params[0];
+      if (!this.winXSet) {
+        this.winX0 = params[0];
+        this.winX1 = params[1];
+        this.winXSet = true;
+      } else {
+        this.winX0 = Math.min(this.winX0, params[0]);
+        this.winX1 = Math.max(this.winX1, params[1]);
+      }
     } else if (cmd === CMD_SET_RAMY_RANGE && params.length === 4) {
       this.yrange = [
         params[0] | (params[1] << 8),
         params[2] | (params[3] << 8),
       ];
       this.y = this.yrange[0];
+      if (!this.winYSet) {
+        this.winY0 = this.yrange[0];
+        this.winY1 = this.yrange[1];
+        this.winYSet = true;
+      } else {
+        this.winY0 = Math.min(this.winY0, this.yrange[0]);
+        this.winY1 = Math.max(this.winY1, this.yrange[1]);
+      }
     } else if (cmd === CMD_SET_RAMX_COUNTER && params.length === 1) {
       this.xByte = byte;
     } else if (cmd === CMD_SET_RAMY_COUNTER && params.length === 2) {
@@ -244,12 +363,12 @@ export class SSD168xDecoder {
   }
 
   private writeRamByte(plane: Uint8Array, byte: number): void {
-    const bpr = this.bytesPerRow;
+    const bpr = this.ramBpr;
     if (
       this.xByte >= 0 &&
       this.xByte < bpr &&
       this.y >= 0 &&
-      this.y < this.height
+      this.y < this.ramRows
     ) {
       plane[this.y * bpr + this.xByte] = byte;
     }

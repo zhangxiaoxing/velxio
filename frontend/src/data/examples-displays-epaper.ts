@@ -143,7 +143,7 @@ void loop() {
     { id: 'w-busy', start: { componentId: 'raspberry-pi-pico', pinName: 'GP13' }, end: { componentId: 'epd-213', pinName: 'BUSY' }, color: '#22cc22' },
     { id: 'w-mosi', start: { componentId: 'raspberry-pi-pico', pinName: 'GP19' }, end: { componentId: 'epd-213', pinName: 'SDI' }, color: '#22aaff' },
     { id: 'w-sck', start: { componentId: 'raspberry-pi-pico', pinName: 'GP18' }, end: { componentId: 'epd-213', pinName: 'SCK' }, color: '#ffdd33' },
-    { id: 'w-vcc', start: { componentId: 'raspberry-pi-pico', pinName: '3V3(OUT)' }, end: { componentId: 'epd-213', pinName: 'VCC' }, color: '#ff4444' },
+    { id: 'w-vcc', start: { componentId: 'raspberry-pi-pico', pinName: '3V3' }, end: { componentId: 'epd-213', pinName: 'VCC' }, color: '#ff4444' },
     { id: 'w-gnd', start: { componentId: 'raspberry-pi-pico', pinName: 'GND.1' }, end: { componentId: 'epd-213', pinName: 'GND' }, color: '#000000' },
   ],
 };
@@ -281,7 +281,7 @@ void loop() {}
     { id: 'w-busy', start: { componentId: 'raspberry-pi-pico', pinName: 'GP13' }, end: { componentId: 'epd-420', pinName: 'BUSY' }, color: '#22cc22' },
     { id: 'w-mosi', start: { componentId: 'raspberry-pi-pico', pinName: 'GP19' }, end: { componentId: 'epd-420', pinName: 'SDI' }, color: '#22aaff' },
     { id: 'w-sck', start: { componentId: 'raspberry-pi-pico', pinName: 'GP18' }, end: { componentId: 'epd-420', pinName: 'SCK' }, color: '#ffdd33' },
-    { id: 'w-vcc', start: { componentId: 'raspberry-pi-pico', pinName: '3V3(OUT)' }, end: { componentId: 'epd-420', pinName: 'VCC' }, color: '#ff4444' },
+    { id: 'w-vcc', start: { componentId: 'raspberry-pi-pico', pinName: '3V3' }, end: { componentId: 'epd-420', pinName: 'VCC' }, color: '#ff4444' },
     { id: 'w-gnd', start: { componentId: 'raspberry-pi-pico', pinName: 'GND.1' }, end: { componentId: 'epd-420', pinName: 'GND' }, color: '#000000' },
   ],
 };
