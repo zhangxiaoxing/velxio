@@ -1337,15 +1337,20 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                             frame_b64 = base64.b64encode(frame.pixels).decode('ascii')
                         except Exception:
                             return
+                        # NOTE: emit FLAT (fields at top level), like every other
+                        # worker event. The backend's qemu_callback re-wraps the
+                        # post-'type' payload under 'data' (simulation.py), so a
+                        # nested 'data' here would double-wrap and the frontend's
+                        # msg.data.component_id would be undefined (panel never
+                        # renders). This was the long-standing "ESP32 ePaper is
+                        # blank" bug.
                         _emit({
                             'type': 'epaper_update',
-                            'data': {
-                                'component_id': _comp_id,
-                                'width': _w,
-                                'height': _h,
-                                'frame_b64': frame_b64,
-                                'refresh_ms': _refresh,
-                            },
+                            'component_id': _comp_id,
+                            'width': _w,
+                            'height': _h,
+                            'frame_b64': frame_b64,
+                            'refresh_ms': _refresh,
                         })
                         if _busy is not None and _busy >= 0:
                             try:
@@ -1372,9 +1377,10 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                         on_flush=_flush_factory(),
                     )
                 else:
+                    _is_bwr = 'bwr' in str(s.get('panel_kind', '')).lower()
                     slave = _Ssd168xEpaperSlave(
                         component_id=comp_id, width=width, height=height,
-                        on_flush=_flush_factory(),
+                        on_flush=_flush_factory(), is_bwr=_is_bwr,
                     )
                 state = {
                     'slave': slave,

@@ -62,9 +62,19 @@ class Ssd168xEpaperSlave:
     width: int
     height: int
     on_flush: Optional[Callable[[Frame], None]] = None
+    # True for tri-colour B/W/Red panels (0x26 = additive red plane). False for
+    # plain B/W panels, where some controllers (e.g. GDEY029T94) put the image
+    # into 0x26 as a second mono plane.
+    is_bwr: bool = False
 
     bw_ram: bytearray = field(init=False)
     red_ram: bytearray = field(init=False)
+    # RAM geometry — sized to the LONGER side both ways so a rotated native
+    # layout (a 296x128 landscape panel whose controller RAM is 128x296) is
+    # captured without dropping rows. compose_frame() reads back the active
+    # window and rotates to the display orientation.
+    _ram_bpr: int = field(init=False, default=0)
+    _ram_rows: int = field(init=False, default=0)
     _current_cmd: int = -1
     _params: List[int] = field(default_factory=list)
     _ram_target: str = "bw"
@@ -78,11 +88,16 @@ class Ssd168xEpaperSlave:
     in_deep_sleep: bool = False
 
     def __post_init__(self) -> None:
-        bytes_per_row = (self.width + 7) // 8
-        self.bw_ram = bytearray([0xFF] * (bytes_per_row * self.height))
-        self.red_ram = bytearray([0x00] * (bytes_per_row * self.height))
-        self._xrange = (0, bytes_per_row - 1)
-        self._yrange = (0, self.height - 1)
+        long_side = max(self.width, self.height)
+        self._ram_bpr = (long_side + 7) // 8
+        self._ram_rows = long_side
+        n = self._ram_bpr * self._ram_rows
+        self.bw_ram = bytearray([0xFF] * n)
+        # B/W panel: 0x26 is a second mono plane → init white. B/W/R panel:
+        # 0x26 is the additive red plane → init "no red" (0x00).
+        self.red_ram = bytearray([0x00 if self.is_bwr else 0xFF] * n)
+        self._xrange = (0, self._ram_bpr - 1)
+        self._yrange = (0, self._ram_rows - 1)
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -94,9 +109,9 @@ class Ssd168xEpaperSlave:
             self._handle_data(byte & 0xFF)
 
     def reset(self) -> None:
-        bytes_per_row = (self.width + 7) // 8
-        self.bw_ram = bytearray([0xFF] * (bytes_per_row * self.height))
-        self.red_ram = bytearray([0x00] * (bytes_per_row * self.height))
+        n = self._ram_bpr * self._ram_rows
+        self.bw_ram = bytearray([0xFF] * n)
+        self.red_ram = bytearray([0x00 if self.is_bwr else 0xFF] * n)
         self._current_cmd = -1
         self._params = []
         self._ram_target = "bw"
@@ -105,21 +120,66 @@ class Ssd168xEpaperSlave:
         self.in_deep_sleep = False
 
     def compose_frame(self) -> Frame:
-        bytes_per_row = (self.width + 7) // 8
-        pixels = bytearray(self.width * self.height)
-        for y in range(self.height):
-            for xb in range(bytes_per_row):
-                b_byte = self.bw_ram[y * bytes_per_row + xb]
-                r_byte = self.red_ram[y * bytes_per_row + xb]
+        # Compose in the controller's NATIVE geometry — the active RAM window
+        # the firmware actually wrote (0x44/0x45) — then rotate to the display
+        # orientation. Handles panels driven with setRotation() whose native
+        # RAM (e.g. 128x296) is the transpose of the display (296x128); the old
+        # code assumed display==native and dropped half the rows.
+        x0, x1 = self._xrange
+        y0, y1 = self._yrange
+        nw_bytes = max(0, x1 - x0 + 1)
+        nw = nw_bytes * 8            # native width (px)
+        nh = max(0, y1 - y0 + 1)     # native height (rows)
+        native = bytearray(nw * nh)
+        for ny in range(nh):
+            row = (y0 + ny) * self._ram_bpr + x0
+            out_row = ny * nw
+            for xb in range(nw_bytes):
+                b_byte = self.bw_ram[row + xb]
+                r_byte = self.red_ram[row + xb]
+                base = xb << 3
                 for bit in range(8):
-                    x = xb * 8 + bit
-                    if x >= self.width:
+                    x = base + bit
+                    if x >= nw:
                         break
                     mask = 0x80 >> bit
-                    is_red = bool(r_byte & mask)
-                    is_white = bool(b_byte & mask)
-                    pixels[y * self.width + x] = 2 if is_red else (1 if is_white else 0)
-        return Frame(self.width, self.height, bytes(pixels))
+                    bw_white = bool(b_byte & mask)
+                    if self.is_bwr:
+                        # Tri-colour: red wins, else the B/W plane decides.
+                        native[out_row + x] = 2 if (r_byte & mask) else (1 if bw_white else 0)
+                    else:
+                        # B/W: the image may live in either plane (0x24 or 0x26),
+                        # so a pixel is white only if BOTH planes say white.
+                        native[out_row + x] = 1 if (bw_white and (r_byte & mask)) else 0
+
+        W, H = self.width, self.height
+        if (nw, nh) == (W, H):
+            pixels = native
+        elif (nw, nh) == (H, W) and nw and nh:
+            # 90° rotation (firmware used setRotation(1): native RAM is the
+            # rotated buffer). Inverse of Adafruit_GFX rotation 1:
+            #   logical(x,y) -> native(x_raw=Wn-1-y, y_raw=x)
+            # so native(x_raw, y_raw) -> display(xd=y_raw, yd=Wn-1-x_raw),
+            # where Wn = native width = nw. Verified visually (text upright).
+            pixels = bytearray([1]) * (W * H)
+            for ny in range(nh):       # ny = y_raw  (0..nh-1)
+                src = ny * nw
+                xd = ny
+                if not (0 <= xd < W):
+                    continue
+                for x in range(nw):    # x = x_raw  (0..nw-1)
+                    yd = (nw - 1) - x
+                    if 0 <= yd < H:
+                        pixels[yd * W + xd] = native[src + x]
+        else:
+            # Unexpected geometry — best-effort top-left copy onto white.
+            pixels = bytearray([1]) * (W * H)
+            for ny in range(min(nh, H)):
+                src = ny * nw
+                dst = ny * W
+                for x in range(min(nw, W)):
+                    pixels[dst + x] = native[src + x]
+        return Frame(W, H, bytes(pixels))
 
     def compose_frame_b64(self) -> str:
         """Convenience for the worker — same as compose_frame() but base64-encoded."""
@@ -187,9 +247,8 @@ class Ssd168xEpaperSlave:
             self._write_ram_byte(self.red_ram, byte)
 
     def _write_ram_byte(self, plane: bytearray, byte: int) -> None:
-        bytes_per_row = (self.width + 7) // 8
-        if 0 <= self._x_byte < bytes_per_row and 0 <= self._y < self.height:
-            plane[self._y * bytes_per_row + self._x_byte] = byte
+        if 0 <= self._x_byte < self._ram_bpr and 0 <= self._y < self._ram_rows:
+            plane[self._y * self._ram_bpr + self._x_byte] = byte
         x_inc = (self._entry_mode & 0x01) == 0x01
         if x_inc:
             if self._x_byte < self._xrange[1]:
