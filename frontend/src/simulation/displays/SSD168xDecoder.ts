@@ -374,19 +374,32 @@ export class SSD168xDecoder {
     }
     // Auto-increment per data_entry_mode (default 0x03: X+, then Y+ at end of row).
     const xInc = (this.entryMode & 0x01) === 0x01;
+    const yInc = (this.entryMode & 0x02) === 0x02;
+    let endOfRow = false;
     if (xInc) {
       if (this.xByte < this.xrange[1]) {
         this.xByte += 1;
       } else {
         this.xByte = this.xrange[0];
-        this.y += 1;
+        endOfRow = true;
       }
     } else {
       if (this.xByte > this.xrange[0]) {
         this.xByte -= 1;
       } else {
         this.xByte = this.xrange[1];
-        this.y += 1;
+        endOfRow = true;
+      }
+    }
+    if (endOfRow) {
+      // Advance Y, WRAPPING at the window boundary like the SSD168x RAM address
+      // counter. Some drivers (e.g. GxEPD2_3C) write the 0x24 then the 0x26
+      // plane without re-seeking the counter, relying on this wrap so the
+      // second plane lands in the window.
+      if (yInc) {
+        this.y = this.y >= this.yrange[1] ? this.yrange[0] : this.y + 1;
+      } else {
+        this.y = this.y <= this.yrange[0] ? this.yrange[1] : this.y - 1;
       }
     }
   }

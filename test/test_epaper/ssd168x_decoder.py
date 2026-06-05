@@ -312,17 +312,26 @@ class SSD168xDecoder:
             plane[self._y * self._ram_bpr + self._x_byte] = byte
         # Auto-increment per data_entry_mode (default x+, then y+ at end of row).
         x_inc = (self._entry_mode & 0x01) == 0x01    # bit0: 1 = X+
-        # entry_mode bit1: Y direction; bit2: which counter advances first.
-        # For the default 0x03, X advances; once it hits xrange[1], wrap and Y++.
+        y_inc = (self._entry_mode & 0x02) == 0x02    # bit1: 1 = Y+
+        end_of_row = False
         if x_inc:
             if self._x_byte < self._xrange[1]:
                 self._x_byte += 1
             else:
                 self._x_byte = self._xrange[0]
-                self._y += 1
+                end_of_row = True
         else:
             if self._x_byte > self._xrange[0]:
                 self._x_byte -= 1
             else:
                 self._x_byte = self._xrange[1]
-                self._y += 1
+                end_of_row = True
+        if end_of_row:
+            # Advance Y, WRAPPING at the window boundary like the SSD168x RAM
+            # address counter. Some drivers (e.g. GxEPD2_3C) write the 0x24 then
+            # the 0x26 plane without re-seeking the counter, relying on this wrap
+            # so the second plane lands in the window.
+            if y_inc:
+                self._y = self._yrange[0] if self._y >= self._yrange[1] else self._y + 1
+            else:
+                self._y = self._yrange[1] if self._y <= self._yrange[0] else self._y - 1
