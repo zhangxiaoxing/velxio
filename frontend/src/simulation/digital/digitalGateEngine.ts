@@ -108,12 +108,23 @@ export function digitalGatesEnabled(): boolean {
   } catch {
     /* missing globals in tests / SecurityError — fall through */
   }
-  return false;
+  // On by default: all-digital gate circuits are evaluated exactly + instantly by
+  // the event-driven engine (the ngspice B-source path could not light a 4-bit
+  // adder). Only pure all-digital-with-a-gate circuits take this path; mixed /
+  // analog circuits stay on ngspice. Override with ?digitalgates=off.
+  return true;
 }
 
-/** True iff every component is a digital primitive (so the engine can own it). */
+/**
+ * True iff every component is a digital primitive AND at least one is a logic
+ * gate. The gate requirement keeps the engine from claiming degenerate analog
+ * circuits that happen to use only {source, resistor, LED} with no logic — those
+ * stay on ngspice.
+ */
 export function isAllDigital(components: DigitalComponent[]): boolean {
-  return components.length > 0 && components.every((c) => isDigitalPrimitive(kindOf(c)));
+  if (components.length === 0) return false;
+  if (!components.every((c) => isDigitalPrimitive(kindOf(c)))) return false;
+  return components.some((c) => isGate(kindOf(c)));
 }
 
 // Endpoint key. A printable separator (NOT a space — a lone space gets stored
