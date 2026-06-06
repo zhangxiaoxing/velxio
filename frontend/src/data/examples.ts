@@ -7114,7 +7114,7 @@ void loop() {
     id: 'esp32-dht22',
     title: 'ESP32: DHT22 Temperature & Humidity',
     description: 'Read temperature and humidity from a DHT22 sensor on GPIO4 of the ESP32.',
-    libraries: ['DHT sensor library'],
+    libraries: ['DHT sensor library', 'Adafruit Unified Sensor'],
     category: 'sensors',
     difficulty: 'beginner',
     boardType: 'esp32',
@@ -7255,7 +7255,7 @@ void loop() {
     title: 'ESP32: MPU-6050 Accelerometer',
     description:
       'Read 3-axis acceleration and gyroscope data from an MPU-6050 over I2C (SDA=D21, SCL=D22).',
-    libraries: ['Adafruit MPU6050', 'Adafruit Unified Sensor'],
+    libraries: ['Adafruit MPU6050', 'Adafruit Unified Sensor', 'Adafruit BusIO'],
     category: 'sensors',
     difficulty: 'intermediate',
     boardType: 'esp32',
@@ -7546,7 +7546,7 @@ void loop() {
     title: 'ESP32-C3: DHT22 Temperature & Humidity',
     description:
       'Read temperature and humidity with a DHT22 sensor on GPIO3 of the ESP32-C3 RISC-V board.',
-    libraries: ['DHT sensor library'],
+    libraries: ['DHT sensor library', 'Adafruit Unified Sensor'],
     category: 'sensors',
     difficulty: 'beginner',
     boardType: 'esp32-c3',
@@ -8297,7 +8297,7 @@ void loop() {
     title: 'ESP32: BMP280 Weather Station',
     description:
       'Read temperature and pressure from a BMP280 barometric sensor over I2C (SDA=D21, SCL=D22).',
-    libraries: ['Adafruit BMP280 Library', 'Adafruit Unified Sensor'],
+    libraries: ['Adafruit BMP280 Library', 'Adafruit Unified Sensor', 'Adafruit BusIO'],
     category: 'sensors',
     difficulty: 'intermediate',
     boardType: 'esp32',
@@ -8377,7 +8377,7 @@ void loop() {
     id: 'esp32-oled',
     title: 'ESP32: SSD1306 OLED Display',
     description: 'Display text and graphics on a 128×64 SSD1306 OLED over I2C (SDA=D21, SCL=D22).',
-    libraries: ['Adafruit SSD1306', 'Adafruit GFX Library'],
+    libraries: ['Adafruit SSD1306', 'Adafruit GFX Library', 'Adafruit BusIO'],
     category: 'displays',
     difficulty: 'intermediate',
     boardType: 'esp32',
@@ -8881,6 +8881,7 @@ void loop() {
     difficulty: 'intermediate',
     boardType: 'esp32-cam',
     boardFilter: 'esp32-cam',
+    libraries: ['Adafruit GFX Library', 'Adafruit BusIO', 'Adafruit ILI9341'],
     code: `// ESP32-CAM live webcam preview on ILI9341 320×240 TFT
 // Click "Camera" in the canvas header → grant permission → see your
 // face on the TFT.
@@ -9114,7 +9115,7 @@ void loop() {
     title: 'ESP32 Doom — Raycaster (ILI9341)',
     description:
       'A Wolfenstein / early-Doom style first-person raycaster on an ESP32 + ILI9341 320x240 colour TFT. The whole screen is redrawn every frame over hardware SPI (VSPI) with Adafruit_ILI9341 block writes (one startWrite/endWrite burst per frame), plus distance fog and darker E/W faces for depth. Four buttons move and turn the player; an auto-demo walks the 16x16 map when idle. Built as an emulation-speed benchmark — it overlays the on-device FPS and prints frame/FPS stats over Serial.',
-    libraries: ['Adafruit GFX Library', 'Adafruit ILI9341'],
+    libraries: ['Adafruit GFX Library', 'Adafruit ILI9341', 'Adafruit BusIO'],
     category: 'games',
     difficulty: 'advanced',
     boardType: 'esp32',
