@@ -81,7 +81,18 @@ function parseGate(kind: string): { inputs: string[]; fn: (b: boolean[]) => bool
   return { inputs, fn };
 }
 
+// Edge-triggered flip-flops (match parts/LogicGateParts.ts edgeTriggeredFF):
+// sample the data inputs on the rising edge of CLK, drive Q + Qbar. They hold
+// state between edges and so break combinational loops (a counter / shift
+// register feeds Q back without the settle kernel oscillating).
+const FF: Record<string, { data: string[]; sample: (q: boolean, inputs: boolean[]) => boolean }> = {
+  'flip-flop-d': { data: ['D'], sample: (_q, [d]) => d },
+  'flip-flop-t': { data: ['T'], sample: (q, [t]) => (t ? !q : q) },
+  'flip-flop-jk': { data: ['J', 'K'], sample: (q, [j, k]) => (j && k ? !q : j ? true : k ? false : q) },
+};
+
 const isGate = (t: string) => t.startsWith('logic-gate-');
+const isFlipFlop = (t: string) => t in FF;
 const isSwitch = (t: string) => t === 'slide-switch';
 const isLed = (t: string) => t === 'led';
 const isResistor = (t: string) => t === 'resistor';
@@ -89,7 +100,7 @@ const isPower = (t: string) => t === 'signal-generator';
 
 /** Components this engine understands. Anything else => analog => bail. */
 function isDigitalPrimitive(t: string): boolean {
-  return isGate(t) || isSwitch(t) || isLed(t) || isResistor(t) || isPower(t);
+  return isGate(t) || isFlipFlop(t) || isSwitch(t) || isLed(t) || isResistor(t) || isPower(t);
 }
 
 /** Opt-in flag, mirrors chipBusEnabled / mixedmode. Default OFF until verified. */
@@ -124,7 +135,7 @@ export function digitalGatesEnabled(): boolean {
 export function isAllDigital(components: DigitalComponent[]): boolean {
   if (components.length === 0) return false;
   if (!components.every((c) => isDigitalPrimitive(kindOf(c)))) return false;
-  return components.some((c) => isGate(kindOf(c)));
+  return components.some((c) => isGate(kindOf(c)) || isFlipFlop(kindOf(c)));
 }
 
 // Endpoint key. A printable separator (NOT a space — a lone space gets stored
@@ -276,6 +287,31 @@ export function buildDigitalNetwork(
     const update = () => setBusDrive(pm, outNet, `${c.id}::Y`, STRONG(spec.fn(st) ? 1 : 0));
     inNets.forEach((n, i) => pm.onPinChange(n, (_p, s) => { st[i] = s; update(); }));
     update();
+  }
+
+  // ── Flip-flops: sample data on the rising CLK edge, drive Q + Qbar ─────────
+  // State is held between edges, so a Q->D feedback (counter / shift register)
+  // does not oscillate the settle kernel — the clock edge is the only update.
+  for (const c of components) {
+    const spec = FF[kindOf(c)];
+    if (!spec) continue;
+    const clkNet = netKey(c.id, 'CLK');
+    const dataNets = spec.data.map((p) => netKey(c.id, p));
+    const qNet = netKey(c.id, 'Q');
+    const qbarNet = netKey(c.id, 'Qbar');
+    let prevClk = pm.getPinState(clkNet);
+    let q = false;
+    const dataSt = dataNets.map((n) => pm.getPinState(n));
+    const emit = () => {
+      setBusDrive(pm, qNet, `${c.id}::Q`, STRONG(q ? 1 : 0));
+      setBusDrive(pm, qbarNet, `${c.id}::Qbar`, STRONG(q ? 0 : 1));
+    };
+    dataNets.forEach((n, i) => pm.onPinChange(n, (_p, s) => { dataSt[i] = s; }));
+    pm.onPinChange(clkNet, (_p, s) => {
+      if (!prevClk && s) { q = spec.sample(q, dataSt); emit(); }
+      prevClk = s;
+    });
+    emit(); // drive initial Q / Qbar
   }
 
   // Re-drive switches now that rail levels have settled (a switch built before
