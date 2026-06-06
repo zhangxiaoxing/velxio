@@ -55,16 +55,9 @@ export const ProjectByIdPage: React.FC = () => {
 
     getProjectById(id)
       .then((project) => {
+        // buildLoadPayload also restores the library manifest (P2.4).
         const payload = buildLoadPayload(project);
         loadProjectState(payload);
-        // P2.4 — restore the declared library manifest (compile scope), also
-        // clearing any stale example manifest from before this load.
-        try {
-          const libs = JSON.parse(project.libraries_json || '[]');
-          useLibraryManifestStore.getState().setLibraries(Array.isArray(libs) ? libs : null);
-        } catch {
-          useLibraryManifestStore.getState().setLibraries(null);
-        }
         setCurrentProject({
           id: project.id,
           slug: project.slug,
@@ -146,6 +139,7 @@ interface RawProject {
   files: { name: string; content: string }[];
   file_groups?: { groupId: string; files: { name: string; content: string }[] }[];
   boards_json?: string;
+  libraries_json?: string; // P2.4 — declared library manifest (compile scope)
   code: string;
   components_json: string;
   wires_json: string;
@@ -237,6 +231,16 @@ export function buildLoadPayload(project: RawProject) {
     wires = JSON.parse(project.wires_json || '[]');
   } catch {
     wires = [];
+  }
+
+  // P2.4 — restore the project's declared library manifest as the compile
+  // scope (clearing any stale example manifest from before this load). Done
+  // here, inside this exported helper, so the call is never tree-shaken.
+  try {
+    const libs = JSON.parse(project.libraries_json || '[]');
+    useLibraryManifestStore.getState().setLibraries(Array.isArray(libs) ? libs : null);
+  } catch {
+    useLibraryManifestStore.getState().setLibraries(null);
   }
 
   return {
