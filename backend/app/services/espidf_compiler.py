@@ -720,6 +720,23 @@ class ESPIDFCompiler:
         props_name = self._parse_library_properties(lib_root).get('name', '')
         return bool(props_name) and self._norm_lib_name(props_name) in allowed_norm
 
+    def _find_manifest_library_for_header(
+        self, header: str, libs_dir: Path, allowed_norm: set[str]
+    ) -> Path | None:
+        """Like _find_library_for_header, but returns the source root of the
+        first library that provides `header` AND is in the project manifest.
+        Returns None when no DECLARED library provides the header — so a stray
+        same-named lib in the shared dir is never picked up."""
+        for lib_dir in sorted(libs_dir.iterdir()):
+            if not lib_dir.is_dir():
+                continue
+            for src_root in (lib_dir, lib_dir / 'src'):
+                if (src_root / header).exists() and self._library_in_manifest(
+                    lib_dir, allowed_norm
+                ):
+                    return src_root
+        return None
+
     def _resolve_library_components(
         self,
         ext_headers: list[str],
@@ -801,11 +818,22 @@ class ESPIDFCompiler:
                 )
                 continue
 
-            src_root = (
-                self._find_library_for_header(header, arduino_libs)
-                if arduino_libs and arduino_libs.is_dir()
-                else None
-            )
+            # P2 manifest scope. When a manifest is supplied, resolve the header
+            # to the DECLARED library that provides it — not the first-
+            # alphabetical lib in the shared dir. Several installed libs may
+            # ship the same header name (e.g. DHT118266, DHT_sensor_library,
+            # servodht11 all have DHT.h); the legacy first-match would pick a
+            # stray. The manifest both picks the right lib AND excludes
+            # undeclared ones (another user's install, a clash). No manifest =
+            # legacy first-match (unchanged).
+            if not (arduino_libs and arduino_libs.is_dir()):
+                src_root = None
+            elif allowed_norm is not None:
+                src_root = self._find_manifest_library_for_header(
+                    header, arduino_libs, allowed_norm
+                )
+            else:
+                src_root = self._find_library_for_header(header, arduino_libs)
 
             # Architecture guard. A user lib that resolves the header but
             # whose library.properties declares architectures= without
@@ -817,20 +845,6 @@ class ESPIDFCompiler:
                     logger.warning(
                         f'[espidf] <{header}> resolved to "{_lib_root.name}" but its '
                         f'library.properties architectures exclude esp32 — skipping'
-                    )
-                    src_root = None
-
-            # P2 manifest scope. A user-installed library is merged only if it's
-            # in the project's declared manifest. Anything else from the shared
-            # dir is out of scope — drop it (the header then falls through to the
-            # core check, or to the "not found" path so install-on-missing can
-            # offer to add it to the manifest). Core/bundled libs aren't gated.
-            if src_root is not None and allowed_norm is not None:
-                _lr = src_root.parent if src_root.name == 'src' else src_root
-                if not self._library_in_manifest(_lr, allowed_norm):
-                    logger.info(
-                        f'[espidf] <{header}> resolves to "{_lr.name}" but it is not in '
-                        f'the project library manifest — not merging (scope)'
                     )
                     src_root = None
 

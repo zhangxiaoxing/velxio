@@ -102,6 +102,11 @@ class TestManifestScope(unittest.TestCase):
             "name=DHT sensor library\n")
         _mk(self.ulibs / "DHT_sensor_library" / "DHT.h")
         _mk(self.ulibs / "DHT_sensor_library" / "DHT.cpp")
+        # A STRAY lib that also ships DHT.h and sorts BEFORE the manifest lib
+        # (real case: DHT118266 sorts before DHT_sensor_library). The manifest
+        # must still resolve DHT.h to the declared lib, not this stray.
+        _mk(self.ulibs / "AAAA_strayDHT" / "DHT.h")
+        _mk(self.ulibs / "AAAA_strayDHT" / "stray_marker.cpp")
         # Out-of-manifest lib (e.g. another user's install / a clash).
         _mk(self.ulibs / "RandomOtherLib" / "Foo.h")
         _mk(self.ulibs / "RandomOtherLib" / "Foo.cpp")
@@ -126,6 +131,11 @@ class TestManifestScope(unittest.TestCase):
         _, hdr2comp = self._resolve(["DHT.h", "Foo.h"], {"DHT sensor library"})
         self.assertEqual(hdr2comp.get("DHT.h"), "user_libs_all")  # declared → merged
         self.assertNotIn("Foo.h", hdr2comp)                       # undeclared → dropped
+        merged = self.out / "user_libs_all"
+        copied = [p.name for p in merged.rglob("*")] if merged.exists() else []
+        # The DECLARED DHT lib was merged, not the stray that sorts first.
+        self.assertIn("DHT.cpp", copied)
+        self.assertNotIn("stray_marker.cpp", copied)
 
     def test_none_manifest_is_scan_all(self):
         # No manifest → legacy behaviour: both resolve.
