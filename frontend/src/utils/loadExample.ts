@@ -11,6 +11,7 @@ import { useSimulatorStore, DEFAULT_BOARD_POSITION } from '../store/useSimulator
 import { useElectricalStore } from '../store/useElectricalStore';
 import { useProjectStore } from '../store/useProjectStore';
 import { useVfsStore } from '../store/useVfsStore';
+import { useLibraryManifestStore } from '../store/useLibraryManifestStore';
 import { isBoardComponent } from './boardPinMapping';
 import { getInstalledLibraries, installLibrary } from '../services/libraryService';
 import { trackOpenExample } from './analytics';
@@ -114,6 +115,11 @@ export async function loadExample(
   // sees null as projectId during every subsequent simulator/editor change,
   // so no PUT goes out.
   useProjectStore.getState().clearCurrentProject();
+
+  // P2.3 — record this example's declared library manifest as the compile
+  // scope (null for core-only examples). EditorToolbar sends it with every
+  // compile so ESP-IDF resolution merges exactly these libraries.
+  useLibraryManifestStore.getState().setLibraries(example.libraries ?? null);
 
   // Loading a new example always starts unpaused — otherwise the canvas
   // would open with every LED frozen at the previous example's state.
