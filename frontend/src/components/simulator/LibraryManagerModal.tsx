@@ -4,6 +4,8 @@ import {
   searchLibraries,
   installLibrary,
   getInstalledLibraries,
+  getCustomLibraries,
+  deleteCustomLibrary,
   uninstallLibrary,
 } from '../../services/libraryService';
 import type { ArduinoLibrary, InstalledLibrary } from '../../services/libraryService';
@@ -66,8 +68,16 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
   const fetchInstalled = useCallback(async () => {
     setLoadingInstalled(true);
     try {
-      const libs = await getInstalledLibraries();
-      setInstalledLibraries(libs);
+      // P2.2c — the shared global list (index libs) PLUS the user's per-user
+      // custom uploads (which live in their per-user store, not the global
+      // list). Custom first so they're easy to find; de-duped by name.
+      const [libs, custom] = await Promise.all([getInstalledLibraries(), getCustomLibraries()]);
+      const customNames = new Set(custom.map((c) => (c.name || '').toLowerCase()));
+      const merged = [
+        ...custom,
+        ...libs.filter((l) => !customNames.has((l.library?.name || l.name || '').toLowerCase())),
+      ];
+      setInstalledLibraries(merged);
     } catch (e: unknown) {
       setStatusMsg({
         type: 'error',
@@ -161,6 +171,25 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
       }
     } catch (e: unknown) {
       setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Uninstall failed' });
+    } finally {
+      setUninstallingLib(null);
+    }
+  };
+
+  // P2.2c — a CUSTOM lib lives in the user's per-user store, not the shared
+  // arduino-cli dir, so removing it hits the per-user delete endpoint.
+  const handleRemoveCustom = async (libName: string) => {
+    setUninstallingLib(libName);
+    setStatusMsg(null);
+    try {
+      const result = await deleteCustomLibrary(libName);
+      if (result.success) {
+        setStatusMsg({ type: 'success', text: `Removed your custom "${libName}".` });
+        removeFromManifest(libName);
+        fetchInstalled();
+      } else {
+        setStatusMsg({ type: 'error', text: result.error || `Failed to remove "${libName}"` });
+      }
     } finally {
       setUninstallingLib(null);
     }
@@ -748,10 +777,19 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
                     )}
                     <button
                       className="lib-uninstall-btn"
-                      onClick={() => handleUninstall(getInstalledName(lib))}
+                      onClick={() =>
+                        lib.custom
+                          ? handleRemoveCustom(getInstalledName(lib))
+                          : handleUninstall(getInstalledName(lib))
+                      }
                       disabled={uninstallingLib !== null}
+                      title={lib.custom ? 'Remove your custom upload' : 'Uninstall library'}
                     >
-                      {uninstallingLib === getInstalledName(lib) ? 'Uninstalling...' : 'UNINSTALL'}
+                      {uninstallingLib === getInstalledName(lib)
+                        ? 'Removing...'
+                        : lib.custom
+                          ? 'Remove'
+                          : 'UNINSTALL'}
                     </button>
                   </div>
                 </div>
