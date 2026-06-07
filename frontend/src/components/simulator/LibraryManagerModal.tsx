@@ -8,7 +8,8 @@ import {
 } from '../../services/libraryService';
 import type { ArduinoLibrary, InstalledLibrary } from '../../services/libraryService';
 import { trackInstallLibrary } from '../../utils/analytics';
-import { useLibraryManifestStore } from '../../store/useLibraryManifestStore';
+import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { boardDisplayName } from '../../types/board';
 import './LibraryManagerModal.css';
 
 interface LibraryManagerModalProps {
@@ -27,13 +28,27 @@ const normLib = (s: string): string =>
 export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen, onClose }) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<Tab>('search');
-  // P2.4 — the project's declared library manifest (compile scope) lives here.
-  const manifestLibs = useLibraryManifestStore((s) => s.libraries);
-  const setLibraries = useLibraryManifestStore((s) => s.setLibraries);
+  // P2.4 — manifests are PER-BOARD: the velxio.json edited here belongs to the
+  // ACTIVE board, so two boards in one project can scope to different libraries.
+  const boards = useSimulatorStore((s) => s.boards);
+  const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
+  const updateBoard = useSimulatorStore((s) => s.updateBoard);
+  const activeBoard = boards.find((b) => b.id === activeBoardId) ?? boards[0];
+  const manifestLibs = activeBoard?.libraries ?? null;
+  const setLibraries = useCallback(
+    (libs: string[] | null) => {
+      if (!activeBoard) return;
+      updateBoard(activeBoard.id, { libraries: libs && libs.length ? libs : undefined });
+    },
+    [activeBoard, updateBoard],
+  );
   // Raw velxio.json editor draft + parse error (the Wokwi-style view).
   const [jsonDraft, setJsonDraft] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [newLibName, setNewLibName] = useState('');
+  // Autocomplete suggestions for the "add library" field (index search).
+  const [addSuggestions, setAddSuggestions] = useState<string[]>([]);
+  const addDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ArduinoLibrary[]>([]);
   const [installedLibraries, setInstalledLibraries] = useState<InstalledLibrary[]>([]);
@@ -163,21 +178,61 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
     (name: string) => {
       const clean = name.trim();
       if (!clean) return;
-      const cur = useLibraryManifestStore.getState().libraries ?? [];
+      const cur = manifestLibs ?? [];
       if (cur.some((l) => normLib(l) === normLib(clean))) return;
       setLibraries([...cur, clean]);
     },
-    [setLibraries],
+    [manifestLibs, setLibraries],
   );
 
   const removeFromManifest = useCallback(
     (name: string) => {
-      const cur = useLibraryManifestStore.getState().libraries ?? [];
+      const cur = manifestLibs ?? [];
       const next = cur.filter((l) => normLib(l) !== normLib(name));
       setLibraries(next.length ? next : null);
     },
-    [setLibraries],
+    [manifestLibs, setLibraries],
   );
+
+  // Autocomplete: debounced index search for the "add library" field. Combined
+  // with instant matches from the installed list in `addOptions` below.
+  useEffect(() => {
+    if (addDebounceRef.current) clearTimeout(addDebounceRef.current);
+    const q = newLibName.trim();
+    if (q.length < 2) {
+      setAddSuggestions([]);
+      return;
+    }
+    addDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await searchLibraries(q);
+        setAddSuggestions(results.map((r) => r.name).filter(Boolean));
+      } catch {
+        setAddSuggestions([]);
+      }
+    }, 300);
+    return () => {
+      if (addDebounceRef.current) clearTimeout(addDebounceRef.current);
+    };
+  }, [newLibName]);
+
+  // Merged, de-duped suggestions: installed libs first (instant), then index
+  // results, excluding what's already declared. Capped for a tidy dropdown.
+  const addOptions = (() => {
+    const q = normLib(newLibName);
+    if (!q) return [];
+    const installedNames = installedLibraries
+      .map((il) => il.library?.name || il.name || '')
+      .filter(Boolean);
+    const merged: string[] = [];
+    for (const n of [...installedNames, ...addSuggestions]) {
+      if (!normLib(n).includes(q)) continue;
+      if (declared.some((d) => normLib(d) === normLib(n))) continue;
+      if (merged.some((m) => normLib(m) === normLib(n))) continue;
+      merged.push(n);
+    }
+    return merged.slice(0, 8);
+  })();
 
   const applyJsonDraft = useCallback(() => {
     try {
@@ -334,10 +389,14 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
         {activeTab === 'project' && (
           <div className="lib-content">
             <div style={{ padding: '10px 14px', color: '#9d9d9d', fontSize: 12, lineHeight: 1.5 }}>
-              Libraries this project uses (its <strong style={{ color: '#ffd60a' }}>velxio.json</strong>).
-              They become the compile scope so libraries never clash between
-              projects. Installing a library from the Search tab adds it here
-              automatically; you can also add or remove them below.
+              Libraries used by{' '}
+              <strong style={{ color: '#a5d6a7' }}>
+                {activeBoard ? boardDisplayName(activeBoard) : 'this board'}
+              </strong>{' '}
+              (its <strong style={{ color: '#ffd60a' }}>velxio.json</strong>). Each
+              board has its own list, so two boards can use different libraries
+              without clashing. Installing a library adds it here automatically;
+              start typing below to add more.
             </div>
 
             {/* Declared libraries as removable rows */}
@@ -371,30 +430,73 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
               ))}
             </div>
 
-            {/* Quick add by name */}
-            <div className="lib-search-bar" style={{ marginTop: 8 }}>
-              <input
-                type="text"
-                placeholder="Add a library by name (e.g. Adafruit GFX Library)"
-                value={newLibName}
-                onChange={(e) => setNewLibName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && newLibName.trim()) {
-                    addToManifest(newLibName);
-                    setNewLibName('');
-                  }
-                }}
-              />
-              <button
-                className="lib-install-btn"
-                disabled={!newLibName.trim()}
-                onClick={() => {
-                  addToManifest(newLibName);
-                  setNewLibName('');
-                }}
-              >
-                Add
-              </button>
+            {/* Add a library — autocomplete (installed + index search) so the
+                user picks from a list instead of typing the exact name. */}
+            <div style={{ position: 'relative', marginTop: 8 }}>
+              <div className="lib-search-bar" style={{ margin: 0 }}>
+                <input
+                  type="text"
+                  placeholder="Add a library — start typing to search…"
+                  value={newLibName}
+                  onChange={(e) => setNewLibName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const pick = addOptions[0] ?? newLibName;
+                      if (pick.trim()) {
+                        addToManifest(pick);
+                        setNewLibName('');
+                        setAddSuggestions([]);
+                      }
+                    } else if (e.key === 'Escape') {
+                      setNewLibName('');
+                      setAddSuggestions([]);
+                    }
+                  }}
+                />
+              </div>
+              {addOptions.length > 0 && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    zIndex: 5,
+                    background: '#252526',
+                    border: '1px solid #3c3c3c',
+                    borderRadius: 4,
+                    marginTop: 2,
+                    maxHeight: 200,
+                    overflowY: 'auto',
+                    boxShadow: '0 6px 16px rgba(0,0,0,0.4)',
+                  }}
+                >
+                  {addOptions.map((opt) => (
+                    <button
+                      key={opt}
+                      onClick={() => {
+                        addToManifest(opt);
+                        setNewLibName('');
+                        setAddSuggestions([]);
+                      }}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '7px 12px',
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#d4d4d4',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = '#094771')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Raw velxio.json editor (Wokwi-style) for power users */}

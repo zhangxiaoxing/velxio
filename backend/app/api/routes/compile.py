@@ -215,17 +215,20 @@ async def _run_compile(
             [f.model_dump() for f in request.spiffs_files]
             if request.spiffs_files else None
         )
-        # Library manifest = ESP-IDF resolution SCOPE. Prefer the manifest SAVED
-        # with the project (authoritative, read server-side from the project
-        # record) so a reloaded project always scopes to its own libraries
-        # regardless of what the client sends; fall back to the manifest the
-        # client sent (unsaved examples). None/empty → legacy scan-all.
+        # Library manifest = ESP-IDF resolution SCOPE. Manifests are now
+        # PER-BOARD (each board carries its own velxio.json), and the client
+        # sends the COMPILING board's manifest in request.libraries — so it
+        # takes precedence: two boards in one project can scope to different
+        # libraries. Fall back to the project-level manifest (the union of all
+        # boards, read server-side) only when the client sends none — e.g. an
+        # anonymous compile or an old client. None/empty → legacy scan-all.
         allowed_libraries = None
-        project_libs = await get_project_libraries(request.project_id)
-        if project_libs:
-            allowed_libraries = set(project_libs)
-        elif request.libraries:
+        if request.libraries:
             allowed_libraries = set(request.libraries)
+        else:
+            project_libs = await get_project_libraries(request.project_id)
+            if project_libs:
+                allowed_libraries = set(project_libs)
         result = await espidf_compiler.compile(
             files, request.board_fqbn,
             progress_callback=progress_callback,

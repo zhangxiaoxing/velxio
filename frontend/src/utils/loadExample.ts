@@ -11,7 +11,6 @@ import { useSimulatorStore, DEFAULT_BOARD_POSITION } from '../store/useSimulator
 import { useElectricalStore } from '../store/useElectricalStore';
 import { useProjectStore } from '../store/useProjectStore';
 import { useVfsStore } from '../store/useVfsStore';
-import { useLibraryManifestStore } from '../store/useLibraryManifestStore';
 import { isBoardComponent } from './boardPinMapping';
 import { getInstalledLibraries, installLibrary } from '../services/libraryService';
 import { trackOpenExample } from './analytics';
@@ -116,10 +115,8 @@ export async function loadExample(
   // so no PUT goes out.
   useProjectStore.getState().clearCurrentProject();
 
-  // P2.3 — record this example's declared library manifest as the compile
-  // scope (null for core-only examples). EditorToolbar sends it with every
-  // compile so ESP-IDF resolution merges exactly these libraries.
-  useLibraryManifestStore.getState().setLibraries(example.libraries ?? null);
+  // P2.4 — this example's declared manifest (compile scope) is assigned to each
+  // board it creates at the END of this function (the boards don't exist yet).
 
   // Loading a new example always starts unpaused — otherwise the canvas
   // would open with every LED frozen at the previous example's state.
@@ -376,5 +373,15 @@ export async function loadExample(
       })),
     );
     recalculateAllWirePositions();
+  }
+
+  // P2.4 — assign this example's declared manifest to every board it created
+  // (the per-board compile scope). Examples declare one library set today, so
+  // each board gets it; the user can refine per board via velxio.json.
+  {
+    const sim = useSimulatorStore.getState();
+    const libs =
+      example.libraries && example.libraries.length ? example.libraries : undefined;
+    for (const b of sim.boards) sim.updateBoard(b.id, { libraries: libs });
   }
 }

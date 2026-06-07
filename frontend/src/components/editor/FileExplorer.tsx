@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEditorStore, chipFileGroupId } from '../../store/useEditorStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
-import { useLibraryManifestStore } from '../../store/useLibraryManifestStore';
 import {
   isProgrammableChip,
   targetForChip,
@@ -300,9 +299,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
     renameFile,
     setActiveGroup,
   } = useEditorStore();
-  const manifestLibs = useLibraryManifestStore((s) => s.libraries);
   const boards = useSimulatorStore((s) => s.boards);
   const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
+  // P2.4 — velxio.json is per-board: show the ACTIVE board's declared manifest.
+  const manifestLibs = boards.find((b) => b.id === activeBoardId)?.libraries ?? null;
   const setActiveBoardId = useSimulatorStore((s) => s.setActiveBoardId);
   const updateBoard = useSimulatorStore((s) => s.updateBoard);
   const updateComponent = useSimulatorStore((s) => s.updateComponent);

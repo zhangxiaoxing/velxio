@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getProjectById } from '../services/projectService';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useProjectStore } from '../store/useProjectStore';
-import { applyProjectManifest } from '../utils/applyProjectManifest';
 import { useSEO } from '../utils/useSEO';
 import { EditorPage } from './EditorPage';
 import type { BoardInstance, BoardKind } from '../types/board';
@@ -56,12 +55,10 @@ export const ProjectByIdPage: React.FC = () => {
     getProjectById(id)
       .then((project) => {
         const payload = buildLoadPayload(project);
+        // Per-board manifests ride in boards_json (buildLoadPayload migrates
+        // pre-per-board projects), so loadProjectState restores each board's
+        // compile scope directly.
         loadProjectState(payload);
-        // P2.4 — restore the declared library manifest (compile scope) so the
-        // editor, toolbar, Library Manager and velxio.json reflect it. Done via
-        // a dedicated side-effecting util (not inside buildLoadPayload) so the
-        // store write survives esbuild's DCE — see applyProjectManifest.
-        applyProjectManifest(project.libraries_json);
         setCurrentProject({
           id: project.id,
           slug: project.slug,
@@ -174,6 +171,8 @@ export function buildLoadPayload(project: RawProject) {
         // pre-feature projects; the compiler falls back to its defaults.
         boardOptions: b.boardOptions,
         spiffsFiles: b.spiffsFiles,
+        // P2.4 — this board's declared manifest (per-board compile scope).
+        libraries: b.libraries,
       }));
     }
   } catch {
@@ -197,6 +196,20 @@ export function buildLoadPayload(project: RawProject) {
         languageMode: 'arduino',
       },
     ];
+  }
+
+  // P2.4 migration — projects saved before per-board manifests stored a single
+  // project-level manifest (libraries_json). If no board carries its own, seed
+  // every board with the project union so it keeps compiling scoped.
+  if (!boards.some((b) => b.libraries && b.libraries.length)) {
+    try {
+      const union = JSON.parse(project.libraries_json || '[]');
+      if (Array.isArray(union) && union.length) {
+        for (const b of boards) b.libraries = union as string[];
+      }
+    } catch {
+      // ignore
+    }
   }
 
   // File groups
@@ -237,9 +250,9 @@ export function buildLoadPayload(project: RawProject) {
     wires = [];
   }
 
-  // NB: the project's declared library manifest (project.libraries_json) is
-  // NOT restored here — esbuild DCE'd the store write when it lived in this
-  // value-producer helper. The caller applies it via applyProjectManifest().
+  // Per-board library manifests ride inside each board (boards_json) and were
+  // migrated above for pre-per-board projects, so loadProjectState restores the
+  // compile scope along with the boards — no separate step needed.
   return {
     boards,
     fileGroups,

@@ -22,7 +22,6 @@ import { clearChipDrives } from '../../simulation/customChips/chipPinDrives';
 import { requestElectricalResolve } from '../../simulation/spice/electricalResolveHook';
 import { reportRunEvent } from '../../services/metricsService';
 import { useProjectStore } from '../../store/useProjectStore';
-import { useLibraryManifestStore } from '../../store/useLibraryManifestStore';
 import { LibraryManagerModal } from '../simulator/LibraryManagerModal';
 import { InstallLibrariesModal } from '../simulator/InstallLibrariesModal';
 import { parseCompileResult } from '../../utils/compilationLogger';
@@ -171,8 +170,6 @@ export const EditorToolbar = ({
 
   const activeBoard = boards.find((b) => b.id === activeBoardId) ?? boards[0];
   const currentProject = useProjectStore((s) => s.currentProject);
-  // P2.3 — declared library manifest of the loaded example/project (compile scope).
-  const activeLibraries = useLibraryManifestStore((s) => s.libraries);
 
   // Board-less mode: digital / analog SPICE-only circuits. The Run / Stop
   // buttons toggle the SPICE solver's `paused` flag — pausing freezes every
@@ -520,7 +517,9 @@ export const EditorToolbar = ({
         {
           boardOptions: activeBoard?.boardOptions,
           spiffsFiles: activeBoard?.spiffsFiles,
-          libraries: activeLibraries,
+          // P2.4 — THIS board's declared manifest (compile scope). Per-board so
+          // two boards can use different libraries without clashing.
+          libraries: activeBoard?.libraries?.length ? activeBoard.libraries : null,
         },
       );
 
@@ -993,7 +992,7 @@ export const EditorToolbar = ({
               })),
             ]);
           },
-          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles, libraries: activeLibraries },
+          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles, libraries: board.libraries?.length ? board.libraries : null },
         );
 
         const resultLogs = parseCompileResult(result, label, boardTarget);
