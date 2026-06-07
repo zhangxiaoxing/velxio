@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEditorStore, chipFileGroupId } from '../../store/useEditorStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { useLibraryManifestStore } from '../../store/useLibraryManifestStore';
 import {
   isProgrammableChip,
   targetForChip,
@@ -299,6 +300,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
     renameFile,
     setActiveGroup,
   } = useEditorStore();
+  const manifestLibs = useLibraryManifestStore((s) => s.libraries);
   const boards = useSimulatorStore((s) => s.boards);
   const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
   const setActiveBoardId = useSimulatorStore((s) => s.setActiveBoardId);
@@ -564,6 +566,38 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
       </div>
 
       <div className="file-explorer-list">
+        {/* velxio.json — the project's declared library manifest (compile
+            scope). Clicking opens the Library Manager where it can be edited.
+            Mirrors Wokwi's libraries.txt: the user sees and configures which
+            libraries the project uses. */}
+        <div
+          className="file-explorer-item fe-file-item"
+          onClick={() => window.dispatchEvent(new CustomEvent('velxio-open-library-manager'))}
+          title="Project libraries — click to manage (compile scope)"
+          style={{ borderBottom: '1px solid #2d2d2d', marginBottom: 4 }}
+        >
+          <span className="file-explorer-icon" style={{ color: '#ffd60a' }}>
+            <FileIcon name="velxio.json" />
+          </span>
+          <span className="file-explorer-name">velxio.json</span>
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: 10,
+              color: '#9d9d9d',
+              background: '#2d2d2d',
+              borderRadius: 8,
+              padding: '1px 7px',
+            }}
+            title={
+              manifestLibs && manifestLibs.length
+                ? `${manifestLibs.length} declared: ${manifestLibs.join(', ')}`
+                : 'No libraries declared (auto-detected at compile)'
+            }
+          >
+            {manifestLibs?.length ?? 0}
+          </span>
+        </div>
         {boards.map((board) => {
           const groupId = board.activeFileGroupId;
           const groupFiles = fileGroups[groupId] ?? [];

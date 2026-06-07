@@ -157,6 +157,10 @@ export function computeProjectStateHash(): string {
     components: sim.components,
     wires: wiresHash,
     groups: groupsForHash,
+    // P2.4 — include the declared library manifest so adding/removing a
+    // library (e.g. via the Library Manager / velxio.json) marks the project
+    // dirty and gets persisted by the auto-save hook, even with no code change.
+    libraries: useLibraryManifestStore.getState().libraries,
   };
   return JSON.stringify(payload);
 }

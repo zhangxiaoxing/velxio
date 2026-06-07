@@ -8,6 +8,7 @@ import {
 } from '../../services/libraryService';
 import type { ArduinoLibrary, InstalledLibrary } from '../../services/libraryService';
 import { trackInstallLibrary } from '../../utils/analytics';
+import { useLibraryManifestStore } from '../../store/useLibraryManifestStore';
 import './LibraryManagerModal.css';
 
 interface LibraryManagerModalProps {
@@ -15,11 +16,24 @@ interface LibraryManagerModalProps {
   onClose: () => void;
 }
 
-type Tab = 'search' | 'installed';
+type Tab = 'project' | 'search' | 'installed';
+
+/** Case/separator-insensitive name match, matching the backend's
+ *  _norm_lib_name (lowercased, alphanumerics only) so the UI's "in project"
+ *  state agrees with what the compiler scopes. */
+const normLib = (s: string): string =>
+  (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen, onClose }) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<Tab>('search');
+  // P2.4 — the project's declared library manifest (compile scope) lives here.
+  const manifestLibs = useLibraryManifestStore((s) => s.libraries);
+  const setLibraries = useLibraryManifestStore((s) => s.setLibraries);
+  // Raw velxio.json editor draft + parse error (the Wokwi-style view).
+  const [jsonDraft, setJsonDraft] = useState('');
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [newLibName, setNewLibName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ArduinoLibrary[]>([]);
   const [installedLibraries, setInstalledLibraries] = useState<InstalledLibrary[]>([]);
@@ -99,10 +113,14 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
       const result = await installLibrary(libName, version);
       if (result.success) {
         trackInstallLibrary(libName);
+        // P2.4 — installing a library declares it for THIS project (adds it to
+        // velxio.json), so the compile is scoped to it and it never clashes
+        // with another project's libs. The user can remove it in the Project tab.
+        addToManifest(libName);
         if (result.fallback) {
-          setStatusMsg({ type: 'success', text: `"${libName}" installed (latest — requested @${result.requested_version} was not available)` });
+          setStatusMsg({ type: 'success', text: `"${libName}" installed and added to this project (latest — requested @${result.requested_version} was not available)` });
         } else {
-          setStatusMsg({ type: 'success', text: `"${libName}${version ? ' @' + version : ''}" installed successfully!` });
+          setStatusMsg({ type: 'success', text: `"${libName}${version ? ' @' + version : ''}" installed and added to this project!` });
         }
         fetchInstalled();
       } else {
@@ -132,6 +150,62 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
       setUninstallingLib(null);
     }
   };
+
+  // ── Project manifest (velxio.json) editing ──────────────────────────────
+  const declared = manifestLibs ?? [];
+
+  const inManifest = useCallback(
+    (name: string): boolean => declared.some((l) => normLib(l) === normLib(name)),
+    [declared],
+  );
+
+  const addToManifest = useCallback(
+    (name: string) => {
+      const clean = name.trim();
+      if (!clean) return;
+      const cur = useLibraryManifestStore.getState().libraries ?? [];
+      if (cur.some((l) => normLib(l) === normLib(clean))) return;
+      setLibraries([...cur, clean]);
+    },
+    [setLibraries],
+  );
+
+  const removeFromManifest = useCallback(
+    (name: string) => {
+      const cur = useLibraryManifestStore.getState().libraries ?? [];
+      const next = cur.filter((l) => normLib(l) !== normLib(name));
+      setLibraries(next.length ? next : null);
+    },
+    [setLibraries],
+  );
+
+  const applyJsonDraft = useCallback(() => {
+    try {
+      const parsed = JSON.parse(jsonDraft || '{}');
+      const libs = Array.isArray(parsed) ? parsed : parsed.libraries;
+      if (!Array.isArray(libs) || !libs.every((x) => typeof x === 'string')) {
+        setJsonError('Expected {"libraries": ["Name", ...]}');
+        return;
+      }
+      setJsonError(null);
+      setLibraries(libs.length ? (libs as string[]) : null);
+    } catch (e) {
+      setJsonError(e instanceof Error ? e.message : 'Invalid JSON');
+    }
+  }, [jsonDraft, setLibraries]);
+
+  // Open the Project (velxio.json) tab when launched from the explorer entry.
+  useEffect(() => {
+    const toProject = () => setActiveTab('project');
+    window.addEventListener('velxio-open-library-manager', toProject);
+    return () => window.removeEventListener('velxio-open-library-manager', toProject);
+  }, []);
+
+  // Keep the raw velxio.json draft in sync with the manifest while not editing.
+  useEffect(() => {
+    setJsonDraft(JSON.stringify({ libraries: manifestLibs ?? [] }, null, 2));
+    setJsonError(null);
+  }, [manifestLibs, isOpen]);
 
   const handleClose = () => {
     onClose();
@@ -198,6 +272,12 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
         {/* Tabs */}
         <div className="lib-tabs">
           <button
+            className={`lib-tab ${activeTab === 'project' ? 'active' : ''}`}
+            onClick={() => setActiveTab('project')}
+          >
+            In project ({declared.length})
+          </button>
+          <button
             className={`lib-tab ${activeTab === 'search' ? 'active' : ''}`}
             onClick={() => setActiveTab('search')}
           >
@@ -245,6 +325,110 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
               </svg>
             )}
             {statusMsg.text}
+          </div>
+        )}
+
+        {/* Project Tab — velxio.json: the libraries THIS project declares.
+            These (plus the arduino-esp32 core) are the ESP32 compile scope, so
+            the project never picks up another project's or user's libraries. */}
+        {activeTab === 'project' && (
+          <div className="lib-content">
+            <div style={{ padding: '10px 14px', color: '#9d9d9d', fontSize: 12, lineHeight: 1.5 }}>
+              Libraries this project uses (its <strong style={{ color: '#ffd60a' }}>velxio.json</strong>).
+              They become the compile scope so libraries never clash between
+              projects. Installing a library from the Search tab adds it here
+              automatically; you can also add or remove them below.
+            </div>
+
+            {/* Declared libraries as removable rows */}
+            <div className="lib-list" style={{ maxHeight: 220 }}>
+              {declared.length === 0 && (
+                <div className="lib-empty">
+                  <p>No libraries declared.</p>
+                  <p className="lib-empty-sub">
+                    Core libraries (WiFi, Wire, SPI, WebServer…) are always
+                    available. Add external libraries from the Search tab or below.
+                  </p>
+                </div>
+              )}
+              {declared.map((name, i) => (
+                <div key={i} className="lib-item">
+                  <div className="lib-item-info">
+                    <div className="lib-item-header">
+                      <span className="lib-item-name">{name}</span>
+                    </div>
+                  </div>
+                  <div className="lib-item-actions">
+                    <button
+                      className="lib-uninstall-btn"
+                      onClick={() => removeFromManifest(name)}
+                      title="Remove from this project (velxio.json)"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Quick add by name */}
+            <div className="lib-search-bar" style={{ marginTop: 8 }}>
+              <input
+                type="text"
+                placeholder="Add a library by name (e.g. Adafruit GFX Library)"
+                value={newLibName}
+                onChange={(e) => setNewLibName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newLibName.trim()) {
+                    addToManifest(newLibName);
+                    setNewLibName('');
+                  }
+                }}
+              />
+              <button
+                className="lib-install-btn"
+                disabled={!newLibName.trim()}
+                onClick={() => {
+                  addToManifest(newLibName);
+                  setNewLibName('');
+                }}
+              >
+                Add
+              </button>
+            </div>
+
+            {/* Raw velxio.json editor (Wokwi-style) for power users */}
+            <details style={{ padding: '6px 14px 14px', color: '#9d9d9d', fontSize: 12 }}>
+              <summary style={{ cursor: 'pointer', userSelect: 'none' }}>
+                Edit velxio.json directly
+              </summary>
+              <textarea
+                value={jsonDraft}
+                onChange={(e) => setJsonDraft(e.target.value)}
+                spellCheck={false}
+                style={{
+                  width: '100%',
+                  minHeight: 110,
+                  marginTop: 8,
+                  background: '#1e1e1e',
+                  color: '#d4d4d4',
+                  border: '1px solid #2d2d2d',
+                  borderRadius: 4,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  padding: 8,
+                  boxSizing: 'border-box',
+                }}
+              />
+              {jsonError && (
+                <div className="lib-status error" style={{ marginTop: 6 }}>
+                  {jsonError}
+                </div>
+              )}
+              <button className="lib-install-btn" style={{ marginTop: 8 }} onClick={applyJsonDraft}>
+                Apply velxio.json
+              </button>
+            </details>
           </div>
         )}
 
@@ -426,6 +610,23 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
                           <polyline points="20 6 9 17 4 12" />
                         </svg>
                       </span>
+                    )}
+                    {inManifest(getInstalledName(lib)) ? (
+                      <button
+                        className="lib-uninstall-btn"
+                        onClick={() => removeFromManifest(getInstalledName(lib))}
+                        title="Remove from this project (velxio.json)"
+                      >
+                        In project ✓
+                      </button>
+                    ) : (
+                      <button
+                        className="lib-install-btn"
+                        onClick={() => addToManifest(getInstalledName(lib))}
+                        title="Add to this project (velxio.json)"
+                      >
+                        Add to project
+                      </button>
                     )}
                     <button
                       className="lib-uninstall-btn"

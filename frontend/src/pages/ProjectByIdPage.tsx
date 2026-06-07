@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getProjectById } from '../services/projectService';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useProjectStore } from '../store/useProjectStore';
-import { useLibraryManifestStore } from '../store/useLibraryManifestStore';
+import { applyProjectManifest } from '../utils/applyProjectManifest';
 import { useSEO } from '../utils/useSEO';
 import { EditorPage } from './EditorPage';
 import type { BoardInstance, BoardKind } from '../types/board';
@@ -55,9 +55,13 @@ export const ProjectByIdPage: React.FC = () => {
 
     getProjectById(id)
       .then((project) => {
-        // buildLoadPayload also restores the library manifest (P2.4).
         const payload = buildLoadPayload(project);
         loadProjectState(payload);
+        // P2.4 — restore the declared library manifest (compile scope) so the
+        // editor, toolbar, Library Manager and velxio.json reflect it. Done via
+        // a dedicated side-effecting util (not inside buildLoadPayload) so the
+        // store write survives esbuild's DCE — see applyProjectManifest.
+        applyProjectManifest(project.libraries_json);
         setCurrentProject({
           id: project.id,
           slug: project.slug,
@@ -233,16 +237,9 @@ export function buildLoadPayload(project: RawProject) {
     wires = [];
   }
 
-  // P2.4 — restore the project's declared library manifest as the compile
-  // scope (clearing any stale example manifest from before this load). Done
-  // here, inside this exported helper, so the call is never tree-shaken.
-  try {
-    const libs = JSON.parse(project.libraries_json || '[]');
-    useLibraryManifestStore.getState().setLibraries(Array.isArray(libs) ? libs : null);
-  } catch {
-    useLibraryManifestStore.getState().setLibraries(null);
-  }
-
+  // NB: the project's declared library manifest (project.libraries_json) is
+  // NOT restored here — esbuild DCE'd the store write when it lived in this
+  // value-producer helper. The caller applies it via applyProjectManifest().
   return {
     boards,
     fileGroups,
