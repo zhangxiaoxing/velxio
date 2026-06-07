@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
+from app.core.hooks import materialize_library_scope
+
 logger = logging.getLogger(__name__)
 
 # Location of the ESP-IDF project template (relative to this file)
@@ -1793,34 +1795,51 @@ class ESPIDFCompiler:
         ))
 
         async def _attempt(allowed: set[str] | None) -> dict:
-            # Fold the effective library set into the build-dir hash. A
-            # different manifest, or the scan-all fallback (allowed=None) after
-            # a scoped attempt, gets its own clean build dir — resetting at
-            # _prepare time (before any cmake), which is the well-tested wipe
-            # path. Same lib set across compiles -> same hash -> warm cache.
+            # P2.1e — materialize a per-compile library scope: the manifest's
+            # libs symlinked from the content-addressed cache (with a legacy-dir
+            # fallback for any not yet cached). A no-op overlay / scan-all
+            # fallback (allowed=None) returns None -> the compiler uses the
+            # single default libraries dir. The scope's content token is folded
+            # into the build-dir hash so a content change (cache vs legacy, or a
+            # cache update) gets its own clean build dir — and the throwaway
+            # scope dir is removed after the attempt (its files were already
+            # copied into the build's user_libs_all by _compile_in_dir).
+            scope = materialize_library_scope(allowed)
+            scope_dir = scope[0] if scope else None
+            scope_token = scope[1] if scope else ''
+            # Fold the effective library set + resolved content into the build-dir
+            # hash. A different manifest, the scan-all fallback (allowed=None), or
+            # changed lib CONTENT gets its own clean build dir — resetting at
+            # _prepare time (before any cmake), the well-tested wipe path.
             _libs_token = (
-                'm:' + ','.join(sorted(allowed)) if allowed is not None else 'scanall'
+                ('m:' + ','.join(sorted(allowed)) + ('|s:' + scope_token if scope_token else ''))
+                if allowed is not None else 'scanall'
             )
             eff_hash = hashlib.sha256(
                 (options_hash + '|' + _libs_token + '|i:' + _ext_inc_token).encode()
             ).hexdigest()[:12]
-            if _USE_PERSISTENT_DIR:
-                project_dir = _prepare_persistent_project_dir(idf_target, eff_hash)
-                logger.info(f'[espidf] Using persistent build dir: {project_dir}')
-                return await self._compile_in_dir(
-                    project_dir, files, idf_target, is_c3,
-                    progress_callback, normalized_opts, spiffs_files,
-                    allowed_libraries=allowed,
-                )
-            with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
-                project_dir = Path(temp_dir) / 'project'
-                shutil.copytree(_TEMPLATE_DIR, project_dir)
-                logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
-                return await self._compile_in_dir(
-                    project_dir, files, idf_target, is_c3,
-                    progress_callback, normalized_opts, spiffs_files,
-                    allowed_libraries=allowed,
-                )
+            try:
+                if _USE_PERSISTENT_DIR:
+                    project_dir = _prepare_persistent_project_dir(idf_target, eff_hash)
+                    logger.info(f'[espidf] Using persistent build dir: {project_dir}')
+                    return await self._compile_in_dir(
+                        project_dir, files, idf_target, is_c3,
+                        progress_callback, normalized_opts, spiffs_files,
+                        allowed_libraries=allowed, libraries_dir=scope_dir,
+                    )
+                with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
+                    project_dir = Path(temp_dir) / 'project'
+                    shutil.copytree(_TEMPLATE_DIR, project_dir)
+                    logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
+                    return await self._compile_in_dir(
+                        project_dir, files, idf_target, is_c3,
+                        progress_callback, normalized_opts, spiffs_files,
+                        allowed_libraries=allowed, libraries_dir=scope_dir,
+                    )
+            finally:
+                if scope_dir is not None:
+                    # rmtree unlinks the symlinks, never their cache/legacy targets.
+                    shutil.rmtree(scope_dir.parent, ignore_errors=True)
 
         async def _attempt_safe(allowed: set[str] | None) -> dict:
             # Retry ONCE on a clearly-transient infrastructure failure (cmake /
@@ -1872,6 +1891,7 @@ class ESPIDFCompiler:
         board_options: dict | None = None,
         spiffs_files: list[dict] | None = None,
         allowed_libraries: set[str] | None = None,
+        libraries_dir: Path | None = None,
     ) -> dict:
         """Inner compile body: writes sketch + libs into `project_dir`,
         runs cmake + ninja, merges binaries. Caller is responsible for
@@ -1980,7 +2000,12 @@ class ESPIDFCompiler:
                 user_libs_dir.mkdir(exist_ok=True)
 
                 esp32_libs   = Path(self.arduino_path) / 'libraries' if self.arduino_path else None
-                arduino_libs = self._find_arduino_libraries_dir()
+                # P2.1e — when a per-compile library scope was materialized (the
+                # manifest's libs symlinked from the content-addressed cache, with
+                # a legacy-dir fallback), resolve from THAT instead of the shared
+                # global volume. Falls back to the single global dir for scan-all
+                # / OSS self-host.
+                arduino_libs = libraries_dir or self._find_arduino_libraries_dir()
 
                 component_names, _ = self._resolve_library_components(
                     ext_headers, arduino_libs, esp32_libs,

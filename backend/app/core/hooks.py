@@ -133,6 +133,42 @@ async def get_project_libraries(project_id: Optional[str]) -> Optional[list[str]
         return None
 
 
+# ── materialize_library_scope ─────────────────────────────────────────────────
+# Given a compile's library manifest (the per-board allowed set), materialize a
+# per-compile libraries directory the ESP-IDF resolver reads from — instead of
+# the single shared global libraries volume. The overlay symlinks each declared
+# library from the content-addressed cache (or, while the global volume is being
+# retired, the legacy dir as a fallback) into a throwaway dir and returns
+# (libraries_dir, content_token). The compiler folds the token into its build-
+# variant hash (so a content change resets the build cache) and removes the dir
+# after the attempt. Returns None when no overlay is loaded OR the manifest is
+# empty -> the compiler uses its single default libraries dir (OSS self-host
+# parity / scan-all). SYNC — pure filesystem (symlink creation).
+
+MaterializeLibraryScopeHook = Callable[[set], Optional[tuple]]
+
+_materialize_library_scope_hook: Optional[MaterializeLibraryScopeHook] = None
+
+
+def register_materialize_library_scope(hook: MaterializeLibraryScopeHook) -> None:
+    """Install the per-compile library-scope materializer. Called in register_pro."""
+    global _materialize_library_scope_hook
+    _materialize_library_scope_hook = hook
+
+
+def materialize_library_scope(allowed_libraries: Optional[set]) -> Optional[tuple]:
+    """Return (libraries_dir, content_token) for the manifest, or None to use the
+    compiler's default single libraries dir. Never raises (a failing materializer
+    degrades to the default dir)."""
+    if _materialize_library_scope_hook is None or not allowed_libraries:
+        return None
+    try:
+        return _materialize_library_scope_hook(allowed_libraries)
+    except Exception:
+        logger.exception("materialize_library_scope hook failed (using default libraries dir)")
+        return None
+
+
 # ── lifespan startup ──────────────────────────────────────────────────────────
 # Overlays that need to run async setup during FastAPI lifespan (DB init,
 # table creation, legacy column migrations, etc.) register a coroutine here.
