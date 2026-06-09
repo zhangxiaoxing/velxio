@@ -6,7 +6,6 @@ import {
   getInstalledLibraries,
   getCustomLibraries,
   deleteCustomLibrary,
-  uninstallLibrary,
 } from '../../services/libraryService';
 import type { ArduinoLibrary, InstalledLibrary } from '../../services/libraryService';
 import { trackInstallLibrary } from '../../utils/analytics';
@@ -218,27 +217,6 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
     [install, addToManifest, activeBoard],
   );
 
-  const uninstall = useCallback(
-    async (name: string) => {
-      setBusyLib(name);
-      setStatusMsg(null);
-      try {
-        const result = await uninstallLibrary(name);
-        if (result.success) {
-          setStatusMsg({ type: 'success', text: `"${name}" uninstalled.` });
-          fetchInstalled();
-        } else {
-          setStatusMsg({ type: 'error', text: result.error || `Failed to uninstall "${name}"` });
-        }
-      } catch (e: unknown) {
-        setStatusMsg({ type: 'error', text: e instanceof Error ? e.message : 'Uninstall failed' });
-      } finally {
-        setBusyLib(null);
-      }
-    },
-    [fetchInstalled],
-  );
-
   // A CUSTOM lib lives in the user's per-user store, so removing it hits the
   // per-user delete endpoint and also drops it from the manifest.
   const removeCustom = useCallback(
@@ -446,14 +424,18 @@ export const LibraryManagerModal: React.FC<LibraryManagerModalProps> = ({ isOpen
                         {busy ? '…' : '+ Add to project'}
                       </button>
                     )}
-                    {row.installed && (
+                    {/* Only CUSTOM uploads can be removed (per-user store). Index
+                        libraries live in the shared content-addressed cache — you
+                        add/remove them from THIS project, but never "uninstall" a
+                        copy everyone shares, so no Uninstall button for them. */}
+                    {row.custom && (
                       <button
                         className="lib-uninstall-btn"
-                        onClick={() => (row.custom ? removeCustom(row.name) : uninstall(row.name))}
+                        onClick={() => removeCustom(row.name)}
                         disabled={busy}
-                        title={row.custom ? 'Remove your custom upload' : 'Uninstall (free the cache)'}
+                        title="Remove your custom upload"
                       >
-                        {busy ? '…' : row.custom ? 'Remove' : 'Uninstall'}
+                        {busy ? '…' : 'Remove'}
                       </button>
                     )}
                   </div>

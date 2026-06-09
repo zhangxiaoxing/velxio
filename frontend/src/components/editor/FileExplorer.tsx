@@ -298,6 +298,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
     deleteFile,
     renameFile,
     setActiveGroup,
+    manifestViewBoardId,
+    setManifestView,
   } = useEditorStore();
   const boards = useSimulatorStore((s) => s.boards);
   const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
@@ -741,17 +743,21 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                       Clicking switches to the board and opens the Library
                       Manager on its list. */}
                   <div
-                    className="file-explorer-item fe-file-item"
+                    className={`file-explorer-item fe-file-item${
+                      manifestViewBoardId === board.id ? ' file-explorer-item-active' : ''
+                    }`}
                     onClick={() => {
                       switchToBoard(board.id, groupId);
-                      window.dispatchEvent(new CustomEvent('velxio-open-library-manager'));
+                      // Open the READ-ONLY libraries.json view (not the modal).
+                      // Library actions happen in the Library Manager modal.
+                      setManifestView(board.id);
                     }}
-                    title={`Libraries for ${boardDisplayName(board)} — click to manage (compile scope)`}
+                    title={`libraries.json — ${boardDisplayName(board)}'s declared libraries (read-only; manage from the Library Manager)`}
                   >
                     <span className="file-explorer-icon" style={{ color: '#ffd60a' }}>
-                      <FileIcon name="velxio.json" />
+                      <FileIcon name="libraries.json" />
                     </span>
-                    <span className="file-explorer-name">velxio.json</span>
+                    <span className="file-explorer-name">libraries.json</span>
                     <span
                       style={{
                         marginLeft: 'auto',
