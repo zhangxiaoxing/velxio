@@ -301,7 +301,7 @@ describe('AVRSimulator Mega — PWM OCR mapping differs from Uno', () => {
     // Call pollPwmRegisters directly — avoids RAF dependency in unit tests
     (sim as any).pollPwmRegisters();
 
-    expect(cb).toHaveBeenCalledWith(13, 128 / 255, expect.anything()); // 3rd arg = sim timeMs
+    expect(cb).toHaveBeenCalledWith(13, 128 / 255);
     sim.stop();
   });
 
@@ -318,7 +318,7 @@ describe('AVRSimulator Mega — PWM OCR mapping differs from Uno', () => {
 
     (sim as any).pollPwmRegisters();
 
-    expect(cb).toHaveBeenCalledWith(5, 200 / 255, expect.anything()); // 3rd arg = sim timeMs
+    expect(cb).toHaveBeenCalledWith(5, 200 / 255);
     sim.stop();
   });
 
@@ -335,7 +335,7 @@ describe('AVRSimulator Mega — PWM OCR mapping differs from Uno', () => {
 
     (sim as any).pollPwmRegisters();
 
-    expect(cb).toHaveBeenCalledWith(6, 100 / 255, expect.anything()); // 3rd arg = sim timeMs
+    expect(cb).toHaveBeenCalledWith(6, 100 / 255);
     sim.stop();
   });
 });

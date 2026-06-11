@@ -168,7 +168,7 @@ describe('AVRSimulator — PWM OCR monitoring', () => {
     sim.start();
     sim.stop();
 
-    expect(pwmCb).toHaveBeenCalledWith(9, 128 / 255, expect.anything()); // 3rd arg = sim timeMs
+    expect(pwmCb).toHaveBeenCalledWith(9, 128 / 255);
   });
 
   it('PWM covers all six Arduino PWM pins', () => {
@@ -202,7 +202,7 @@ describe('AVRSimulator — PWM OCR monitoring', () => {
 
     PWM_MAP.forEach(({ pin }, i) => {
       const expected = ((i + 1) * 25) / 255;
-      expect(cbs[pin]).toHaveBeenCalledWith(pin, expected, expect.anything()); // 3rd arg = sim timeMs
+      expect(cbs[pin]).toHaveBeenCalledWith(pin, expected);
     });
   });
 });

@@ -201,7 +201,13 @@ export class PinManager {
     if (dutyCycle > 0) this.outputPins.add(pin);
     const callbacks = this.pwmListeners.get(pin);
     if (callbacks) {
-      callbacks.forEach((cb) => cb(pin, dutyCycle, timeMs));
+      // Backward-compatible dispatch: the original PwmCallback contract is
+      // (pin, dutyCycle). Only listeners that actually declare a 3rd parameter
+      // (the buzzer, which needs the precise onset time for sample-accurate
+      // audio) receive timeMs. Plain 2-arg listeners — and the existing tests
+      // that assert toHaveBeenCalledWith(pin, dutyCycle) — see an unchanged
+      // 2-arg call instead of a spurious trailing arg.
+      callbacks.forEach((cb) => (cb.length >= 3 ? cb(pin, dutyCycle, timeMs) : cb(pin, dutyCycle)));
     }
   }
 

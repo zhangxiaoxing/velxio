@@ -124,7 +124,7 @@ describe('PinManager — PWM duty cycle', () => {
     const cb = vi.fn();
     pm.onPwmChange(9, cb);
     pm.updatePwm(9, 0.5);
-    expect(cb).toHaveBeenCalledWith(9, 0.5, undefined); // 3rd arg = optional timeMs (not passed here)
+    expect(cb).toHaveBeenCalledWith(9, 0.5);
   });
 
   it('stores the latest PWM value', () => {
@@ -150,8 +150,38 @@ describe('PinManager — PWM duty cycle', () => {
     pwmPins.forEach((pin, i) => {
       const dc = (i + 1) / 6;
       pm.updatePwm(pin, dc);
-      expect(callbacks[i]).toHaveBeenCalledWith(pin, dc, undefined); // optional timeMs not passed
+      expect(callbacks[i]).toHaveBeenCalledWith(pin, dc);
     });
+  });
+
+  // The optional timeMs (precise simulated onset time, used by the buzzer for
+  // sample-accurate audio) must NOT widen the public PwmCallback contract:
+  // listeners that declare only (pin, dutyCycle) keep getting a 2-arg call,
+  // while a listener that declares a 3rd parameter receives timeMs. This guards
+  // the arity-based dispatch the buzzer relies on. Regular functions are used
+  // (not vi.fn) because the dispatch keys off Function.length, and a 3-param
+  // listener must report length 3.
+  it('hands timeMs only to listeners that declare a 3rd parameter', () => {
+    let twoArgCount = -1;
+    let threeArgCount = -1;
+    let threeArgTime: number | undefined;
+    function twoArg(this: unknown, _pin: number, _dc: number) {
+      // eslint-disable-next-line prefer-rest-params
+      twoArgCount = arguments.length;
+    }
+    function threeArg(this: unknown, _pin: number, _dc: number, t?: number) {
+      // eslint-disable-next-line prefer-rest-params
+      threeArgCount = arguments.length;
+      threeArgTime = t;
+    }
+    pm.onPwmChange(7, twoArg);
+    pm.onPwmChange(7, threeArg);
+
+    pm.updatePwm(7, 0.5, 123);
+
+    expect(twoArgCount).toBe(2); // original 2-arg contract preserved — no trailing timeMs
+    expect(threeArgCount).toBe(3);
+    expect(threeArgTime).toBe(123); // 3-arg listener (the buzzer) gets the precise time
   });
 });
 

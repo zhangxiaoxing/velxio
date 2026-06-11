@@ -283,7 +283,7 @@ describe('ATtiny85 — PWM monitoring', () => {
     sim.start();
     sim.stop();
 
-    expect(pwmCb).toHaveBeenCalledWith(1, 128 / 255, expect.anything()); // 3rd arg = sim timeMs
+    expect(pwmCb).toHaveBeenCalledWith(1, 128 / 255);
   });
 
   it('PinManager receives PWM update on pin 0 when OCR0A (0x56) is written', () => {
@@ -300,7 +300,7 @@ describe('ATtiny85 — PWM monitoring', () => {
     sim.start();
     sim.stop();
 
-    expect(pwmCb).toHaveBeenCalledWith(0, 64 / 255, expect.anything()); // 3rd arg = sim timeMs
+    expect(pwmCb).toHaveBeenCalledWith(0, 64 / 255);
   });
 
   it('ATtiny85 PWM covers 4 pins (OCR0A/OCR0B/OCR1A/OCR1B)', () => {
