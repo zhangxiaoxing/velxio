@@ -1002,107 +1002,196 @@ PartSimulationRegistry.register('ir-remote', {
 // ─── MicroSD Card ─────────────────────────────────────────────────────────────
 
 /**
- * MicroSD card — SPI mode initialization handshake simulator.
+ * MicroSD card — generic SD-over-SPI device with a real backing store.
  *
- * Hooks into the AVR's hardware SPI peripheral (simulator.spi.onTransmit).
- * Implements the SD card v2 / SDHC initialization sequence:
+ * Hooks the hardware SPI peripheral (simulator.spi) — works for AVR and RP2040
+ * (both expose the `.spi` adapter). ESP32 runs in QEMU and is a separate path.
  *
- *   CMD0  (0x40) → R1 = 0x01  (idle)
- *   CMD8  (0x48) → R7 = 0x01, 0x00, 0x00, 0x01, 0xAA
- *   CMD55 (0x77) → R1 = 0x01  (prefix for ACMD)
- *   ACMD41 (0x69) → R1 = 0x00  (ready — skip lengthy poll loop)
- *   CMD58 (0x7A) → R3 = 0x00, 0x40, 0x00, 0x00, 0x00  (SDHC power-up OCR)
- *   CMD17 (0x51) → R1 = 0x00 + data token 0xFE + 512 bytes 0xFF + CRC
- *   CMD24 (0x58) → R1 = 0x00 + data response 0x05 (accepted)
+ * Implements the SD v2 / SDHC command set the SD.h / SdFat libraries use, so it
+ * works generically with any card configuration (not a one-card hack):
+ *   - Init/info: CMD0, CMD8 (R7), CMD55+ACMD41, CMD58 (OCR, CCS=1 SDHC),
+ *     CMD9 (CSD v2 reflecting SD_CARD_BYTES), CMD10 (CID), CMD13, CMD16.
+ *   - Read:  CMD17 (single), CMD18 (multiple, until CMD12) — served from store.
+ *   - Write: CMD24 (single), CMD25 (multiple, until stop token 0xFD) — the data
+ *     block that follows the command is captured and stored.
  *
- * 0xFF bytes act as idle / clock-only bytes; the response queue is drained
- * one byte per SPI transfer.
+ * Addressing: the card advertises SDHC (CCS=1), so CMD17/24 args are BLOCK
+ * indices (not byte offsets). Backing store is a sparse Map of 512-byte sectors.
  *
- * NOTE: This hooks into AVR SPI only (simulator.spi). RP2040 SPI integration
- * follows the same pattern but uses simulator.rp2040.spi[0].onTransmit.
+ * An optional pre-built FAT image can be injected via element.sdImageData (the
+ * file-upload / auto-copy feature lands files there). The response queue drains
+ * one byte per SPI transfer; idle line reads 0xFF.
  */
+const SD_BLOCK_SIZE = 512;
+// Fixed card capacity (mirrors Wokwi's "no size attribute" model). The backing
+// store is SPARSE — only written/loaded blocks allocate — so the advertised
+// capacity is free in RAM. Adjustable here; not exposed to the user.
+const SD_CARD_BYTES = 64 * 1024 * 1024; // 64 MB
+const SD_C_SIZE = Math.floor(SD_CARD_BYTES / (512 * 1024)) - 1; // CSD v2 C_SIZE
+
 PartSimulationRegistry.register('microsd-card', {
-  attachEvents: (_element, simulator, _getPin) => {
+  attachEvents: (element, simulator, _getPin) => {
     const spi = (simulator as any).spi;
     if (!spi) return () => {};
+    const el = element as any;
 
+    // ── Backing store: sparse map of blockIndex -> 512-byte sector ──────────
+    const store = new Map<number, Uint8Array>();
+    const readBlock = (idx: number): Uint8Array =>
+      store.get(idx) ?? new Uint8Array(SD_BLOCK_SIZE); // unwritten = zeros
+    const writeBlock = (idx: number, data: ArrayLike<number>): void => {
+      const blk = new Uint8Array(SD_BLOCK_SIZE);
+      blk.set(Array.from(data).slice(0, SD_BLOCK_SIZE));
+      store.set(idx, blk);
+    };
+
+    // Optional pre-built FAT image (Phase 2 sets element.sdImageData). Loaded
+    // into the store block-by-block so the firmware can mount + read it.
+    (() => {
+      const raw = el.sdImageData;
+      if (!raw) return;
+      const bytes: Uint8Array | null =
+        raw instanceof Uint8Array ? raw
+        : raw instanceof ArrayBuffer ? new Uint8Array(raw)
+        : Array.isArray(raw) ? Uint8Array.from(raw)
+        : null;
+      if (!bytes) return;
+      for (let i = 0; i * SD_BLOCK_SIZE < bytes.length; i++) {
+        const slice = bytes.subarray(i * SD_BLOCK_SIZE, (i + 1) * SD_BLOCK_SIZE);
+        // Skip all-zero blocks so the store stays sparse (they read back as
+        // zeros anyway) — a multi-MB FAT image only allocates its used blocks.
+        if (slice.some((b) => b !== 0)) writeBlock(i, slice);
+      }
+    })();
+
+    // ── 16-byte CSD (v2.0, high-capacity) reflecting SD_CARD_BYTES ──────────
+    const buildCSD = (): number[] => [
+      0x40, 0x0e, 0x00, 0x32, 0x5b, 0x59, 0x00,
+      (SD_C_SIZE >> 16) & 0x3f, (SD_C_SIZE >> 8) & 0xff, SD_C_SIZE & 0xff,
+      0x7f, 0x80, 0x0a, 0x40, 0x00, 0x01,
+    ];
+    // ── 16-byte CID (manufacturer info; values are cosmetic) ────────────────
+    const buildCID = (): number[] => [
+      0x01, 0x56, 0x58, 0x56, 0x45, 0x4c, 0x58, 0x53, // mfr, "VX", "VELXS"
+      0x10, 0x00, 0x00, 0x00, 0x01, 0x01, 0x60, 0x01,
+    ];
+
+    // ── SD SPI protocol state machine ───────────────────────────────────────
     const respQueue: number[] = [];
     let cmdBuf: number[] = [];
     let expectingAcmd = false;
+    // Phases: 'cmd' (idle/command), and the write data path after CMD24/25.
+    let phase: 'cmd' | 'wait-token' | 'recv-data' | 'recv-crc' = 'cmd';
+    let dataBuf: number[] = [];
+    let crcLeft = 0;
+    let writeAddr = 0;
+    let multiWrite = false;
+    // CMD18 continuous read: keep streaming blocks until CMD12.
+    let multiRead = false;
+    let readAddr = 0;
 
-    /** Resolve GPIO CS if wired — not strictly required since Arduino drives CS via GPIO */
-    function enqueueR1(r1: number): void {
-      respQueue.push(r1);
-    }
-    function enqueueR7(r1: number, v32: number): void {
-      respQueue.push(r1, (v32 >> 24) & 0xff, (v32 >> 16) & 0xff, (v32 >> 8) & 0xff, v32 & 0xff);
-    }
+    /** Queue a data block as the firmware reads it: token + 512 bytes + CRC. */
+    const pushDataBlock = (bytes: ArrayLike<number>): void => {
+      respQueue.push(0xfe); // start-block token
+      for (let i = 0; i < SD_BLOCK_SIZE; i++) respQueue.push((bytes as any)[i] ?? 0);
+      respQueue.push(0xff, 0xff); // CRC (ignored by SPI mode)
+    };
+    /** Queue R1 + a short (<=16 byte) data block (CSD/CID). */
+    const pushShortData = (bytes: number[]): void => {
+      respQueue.push(0x00, 0xfe, ...bytes, 0xff, 0xff);
+    };
 
-    function processCmd(raw: number[]): void {
-      if (raw.length < 6) return;
-      const cmdIndex = raw[0] & 0x3f;
+    const processCmd = (raw: number[]): void => {
+      const cmd = raw[0] & 0x3f;
+      const arg = ((raw[1] << 24) | (raw[2] << 16) | (raw[3] << 8) | raw[4]) >>> 0;
       const isAcmd = expectingAcmd;
       expectingAcmd = false;
 
       if (isAcmd) {
-        // ACMD41: send init — respond ready
-        if (cmdIndex === 41) {
-          enqueueR1(0x00);
-          return;
-        }
+        if (cmd === 41) { respQueue.push(0x00); return; } // ACMD41 — ready
+        if (cmd === 13) { respQueue.push(0x00, 0x00); return; } // ACMD13 SD status (R2)
+        // fall through for other ACMDs
       }
 
-      switch (cmdIndex) {
-        case 0:
-          enqueueR1(0x01);
+      switch (cmd) {
+        case 0: respQueue.push(0x01); break; // GO_IDLE -> idle
+        case 8: respQueue.push(0x01, 0x00, 0x00, 0x01, 0xaa); break; // SEND_IF_COND (R7)
+        case 9: pushShortData(buildCSD()); break; // SEND_CSD
+        case 10: pushShortData(buildCID()); break; // SEND_CID
+        case 12: multiRead = false; respQueue.push(0x00, 0x00, 0xff); break; // STOP_TRANSMISSION
+        case 13: respQueue.push(0x00, 0x00); break; // SEND_STATUS (R2)
+        case 16: respQueue.push(0x00); break; // SET_BLOCKLEN (fixed 512)
+        // Standard-capacity (SDSC) byte addressing: CMD17/18/24/25 args are BYTE
+        // offsets (block*512), not block indices. The Arduino SD library uses
+        // this even when the card advertises SDHC, so we present SDSC (CMD58
+        // CCS=0) and translate `arg >> 9` -> block. SDSC covers up to 2 GB,
+        // plenty for our small card; every SD library supports it.
+        case 17: respQueue.push(0x00); pushDataBlock(readBlock(arg >> 9)); break; // READ_SINGLE
+        case 18: // READ_MULTIPLE — stream until CMD12
+          respQueue.push(0x00);
+          readAddr = arg >> 9; multiRead = true;
+          pushDataBlock(readBlock(readAddr)); readAddr++;
           break;
-        case 8:
-          enqueueR7(0x01, 0x000001aa);
+        case 24: // WRITE_SINGLE — data block follows
+          respQueue.push(0x00); writeAddr = arg >> 9; multiWrite = false; phase = 'wait-token';
           break;
-        case 55:
-          enqueueR1(0x01);
-          expectingAcmd = true;
+        case 25: // WRITE_MULTIPLE — data blocks follow until stop token
+          respQueue.push(0x00); writeAddr = arg >> 9; multiWrite = true; phase = 'wait-token';
           break;
-        case 58:
-          enqueueR7(0x00, 0x40000000);
-          break; // SDHC OCR
-        case 17: // CMD17: read single block
-          respQueue.push(0x00); // R1 ok
-          respQueue.push(0xfe); // data token
-          for (let i = 0; i < 512; i++) respQueue.push(0xff); // empty block
-          respQueue.push(0xff, 0xff); // CRC (ignored)
-          break;
-        case 24: // CMD24: write single block
-          respQueue.push(0x00, 0x05); // R1 ok, data response accepted
-          break;
-        default:
-          enqueueR1(0x00); // respond OK for unhandled commands
+        case 55: respQueue.push(0x01); expectingAcmd = true; break; // APP_CMD prefix
+        case 58: respQueue.push(0x00, 0x80, 0xff, 0x80, 0x00); break; // READ_OCR (powered, CCS=0 SDSC)
+        default: respQueue.push(0x00); // accept unhandled commands
       }
-    }
+    };
 
-    const prevOnTransmit = spi.onTransmit as ((b: number) => void) | null | undefined;
+    const prevOnByte = spi.onByte as ((b: number) => void) | null | undefined;
 
-    spi.onTransmit = (byte: number) => {
-      if (byte & 0x40 && cmdBuf.length === 0) {
-        // New command — start accumulation
-        cmdBuf = [byte];
-      } else if (cmdBuf.length > 0 && cmdBuf.length < 6) {
-        cmdBuf.push(byte);
-        if (cmdBuf.length === 6) {
-          processCmd(cmdBuf);
-          cmdBuf = [];
-        }
+    spi.onByte = (byte: number) => {
+      // Full-duplex: the MISO shifted out for THIS transfer was prepared by
+      // earlier bytes, so reply FIRST (from the queue as it stood before this
+      // byte), THEN consume this MOSI byte to prepare future MISO. This gives
+      // the 1-byte (Ncr) command->response latency real SD cards have — the
+      // host reads R1 on the 0xFF clocks it sends AFTER the 6 command bytes,
+      // not on the last command byte. Replying after processing broke SD.begin.
+      spi.completeTransfer?.(respQueue.length > 0 ? respQueue.shift()! : 0xff);
+
+      switch (phase) {
+        case 'cmd':
+          if (cmdBuf.length === 0 && (byte & 0xc0) === 0x40) {
+            cmdBuf = [byte]; // command start (bit7=0, bit6=1)
+          } else if (cmdBuf.length > 0) {
+            cmdBuf.push(byte);
+            if (cmdBuf.length === 6) { processCmd(cmdBuf); cmdBuf = []; }
+          } else if (multiRead && respQueue.length === 0) {
+            // Continuous read: refill the next block while the host clocks 0xFF.
+            pushDataBlock(readBlock(readAddr)); readAddr++;
+          }
+          break;
+        case 'wait-token':
+          if (byte === 0xfe || byte === 0xfc) { phase = 'recv-data'; dataBuf = []; }
+          else if (byte === 0xfd) { multiWrite = false; phase = 'cmd'; respQueue.push(0x00); }
+          // else 0xFF gap — keep waiting
+          break;
+        case 'recv-data':
+          dataBuf.push(byte);
+          if (dataBuf.length === SD_BLOCK_SIZE) { phase = 'recv-crc'; crcLeft = 2; }
+          break;
+        case 'recv-crc':
+          if (--crcLeft === 0) {
+            writeBlock(writeAddr, dataBuf);
+            writeAddr++;
+            respQueue.push(0x05); // data-response: accepted
+            phase = multiWrite ? 'wait-token' : 'cmd';
+          }
+          break;
       }
-
-      // Drain response queue; idle reply is 0xFF
-      const reply = respQueue.length > 0 ? respQueue.shift()! : 0xff;
-      spi.completeTransmit(reply);
     };
 
     return () => {
-      spi.onTransmit = prevOnTransmit ?? null;
+      spi.onByte = prevOnByte ?? null;
       respQueue.length = 0;
       cmdBuf = [];
+      store.clear();
     };
   },
 });

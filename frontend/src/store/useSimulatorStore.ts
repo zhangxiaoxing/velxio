@@ -28,6 +28,7 @@ import { Stm32Bridge, stm32PinNameToLinear } from '../simulation/Stm32Bridge';
 import { STM32_LED } from '../components/velxio-components/Stm32BluePillElement';
 import { useEditorStore } from './useEditorStore';
 import { useVfsStore } from './useVfsStore';
+import { buildProjectSdImage, decodeSdFiles, bytesToB64 } from '../utils/sdCardFiles';
 import { boardPinToNumber, isBoardComponent } from '../utils/boardPinMapping';
 import { autoWireColor, DEFAULT_WIRE_COLOR } from '../utils/wireUtils';
 import { createSerialBatcher } from './serialBatcher';
@@ -1726,6 +1727,24 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
             );
           }
           esp32Bridge.wifiEnabled = hasWifi;
+
+          // microSD — if a card is on the canvas, build a FAT16 image (project
+          // files, plus any paid binary uploads stored on the part) and hand
+          // it to the bridge so the QEMU worker can attach it as an SD-over-SPI
+          // slave. No card -> clear any stale image from a previous run.
+          const sdCard = components.find((c) => c.metadataId === 'microsd-card');
+          if (sdCard) {
+            try {
+              const uploaded = decodeSdFiles(sdCard.properties.sdFiles);
+              const image = buildProjectSdImage(useEditorStore.getState().files, uploaded);
+              esp32Bridge.sdImageB64 = bytesToB64(image);
+            } catch (e) {
+              console.warn('[microsd] SD image build failed:', e);
+              esp32Bridge.sdImageB64 = undefined;
+            }
+          } else {
+            esp32Bridge.sdImageB64 = undefined;
+          }
 
           // Ensure firmware is loaded into the bridge (handles page-refresh case
           // where _pendingFirmware is lost but compiledProgram is still in store).

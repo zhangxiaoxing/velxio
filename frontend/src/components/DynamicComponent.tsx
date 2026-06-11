@@ -15,6 +15,8 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import type { ComponentMetadata } from '../types/component-metadata';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useElectricalStore } from '../store/useElectricalStore';
+import { useEditorStore } from '../store/useEditorStore';
+import { buildProjectSdImage, decodeSdFiles } from '../utils/sdCardFiles';
 import { PartSimulationRegistry } from '../simulation/parts';
 import { isBoardComponent, boardPinToNumber } from '../utils/boardPinMapping';
 import {
@@ -557,6 +559,19 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
           getArduinoPin,
         );
       };
+
+      // microSD auto-copy (free, Wokwi model): bake the project's workspace
+      // files into a FAT16 image the card serves over SD-over-SPI. Paid uploads
+      // (the "SD Card" panel) will merge into this list in a later phase.
+      if (metadata.id === 'microsd-card') {
+        try {
+          const uploaded = decodeSdFiles(properties.sdFiles); // paid uploads (if any)
+          (el as unknown as { sdImageData?: Uint8Array }).sdImageData =
+            buildProjectSdImage(useEditorStore.getState().files, uploaded);
+        } catch (e) {
+          console.warn('[microsd] SD image build failed:', e);
+        }
+      }
 
       cleanupSimulationEvents = logic.attachEvents(
         el,

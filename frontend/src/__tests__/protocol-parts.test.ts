@@ -72,8 +72,8 @@ function makePinSim() {
 
 function makeSPISim() {
   const spi = {
-    onTransmit: null as ((b: number) => void) | null,
-    completeTransmit: vi.fn(),
+    onByte: null as ((b: number) => void) | null,
+    completeTransfer: vi.fn(),
   };
   return {
     spi,
@@ -560,11 +560,11 @@ describe('ir-remote — button dispatch', () => {
 // ─── microsd-card ─────────────────────────────────────────────────────────────
 
 describe('microsd-card — SPI init handshake', () => {
-  it('hooks into simulator.spi.onTransmit', () => {
+  it('hooks into simulator.spi.onByte', () => {
     const sim = makeSPISim();
     const logic = PartSimulationRegistry.get('microsd-card')!;
     logic.attachEvents!(makeElement(), sim as any, noPins);
-    expect(sim.spi.onTransmit).toBeTypeOf('function');
+    expect(sim.spi.onByte).toBeTypeOf('function');
   });
 
   it('CMD0 (0x40 + 4 zeroes + CRC) returns R1=0x01 (idle)', () => {
@@ -572,12 +572,12 @@ describe('microsd-card — SPI init handshake', () => {
     const logic = PartSimulationRegistry.get('microsd-card')!;
     logic.attachEvents!(makeElement(), sim as any, noPins);
 
-    const tx = sim.spi.onTransmit as (b: number) => void;
+    const tx = sim.spi.onByte as (b: number) => void;
     // Send CMD0: [0x40, 0x00, 0x00, 0x00, 0x00, 0x95]
     [0x40, 0x00, 0x00, 0x00, 0x00, 0x95].forEach((b) => tx(b));
     // Poll with 0xFF to receive response
     tx(0xff);
-    const replies = (sim.spi.completeTransmit as ReturnType<typeof vi.fn>).mock.calls.map(
+    const replies = (sim.spi.completeTransfer as ReturnType<typeof vi.fn>).mock.calls.map(
       ([v]) => v,
     );
     expect(replies).toContain(0x01);
@@ -588,12 +588,12 @@ describe('microsd-card — SPI init handshake', () => {
     const logic = PartSimulationRegistry.get('microsd-card')!;
     logic.attachEvents!(makeElement(), sim as any, noPins);
 
-    const tx = sim.spi.onTransmit as (b: number) => void;
+    const tx = sim.spi.onByte as (b: number) => void;
     // CMD8: [0x48, 0x00, 0x00, 0x01, 0xAA, 0x87]
     [0x48, 0x00, 0x00, 0x01, 0xaa, 0x87].forEach((b) => tx(b));
     // Read 5 bytes of R7 response
     for (let i = 0; i < 5; i++) tx(0xff);
-    const replies = (sim.spi.completeTransmit as ReturnType<typeof vi.fn>).mock.calls.map(
+    const replies = (sim.spi.completeTransfer as ReturnType<typeof vi.fn>).mock.calls.map(
       ([v]) => v,
     );
     // R7 = 0x01, 0x00, 0x00, 0x01, 0xAA
@@ -606,13 +606,13 @@ describe('microsd-card — SPI init handshake', () => {
     const logic = PartSimulationRegistry.get('microsd-card')!;
     logic.attachEvents!(makeElement(), sim as any, noPins);
 
-    const tx = sim.spi.onTransmit as (b: number) => void;
+    const tx = sim.spi.onByte as (b: number) => void;
     [0x77, 0x00, 0x00, 0x00, 0x00, 0x65].forEach((b) => tx(b)); // CMD55
     tx(0xff); // poll
-    sim.spi.completeTransmit.mockClear();
+    sim.spi.completeTransfer.mockClear();
     [0x69, 0x40, 0x00, 0x00, 0x00, 0x77].forEach((b) => tx(b)); // ACMD41
     tx(0xff);
-    const replies = (sim.spi.completeTransmit as ReturnType<typeof vi.fn>).mock.calls.map(
+    const replies = (sim.spi.completeTransfer as ReturnType<typeof vi.fn>).mock.calls.map(
       ([v]) => v,
     );
     expect(replies).toContain(0x00);
@@ -623,17 +623,17 @@ describe('microsd-card — SPI init handshake', () => {
     const logic = PartSimulationRegistry.get('microsd-card')!;
     logic.attachEvents!(makeElement(), sim as any, noPins);
 
-    const tx = sim.spi.onTransmit as (b: number) => void;
+    const tx = sim.spi.onByte as (b: number) => void;
     tx(0xff);
-    expect(sim.spi.completeTransmit).toHaveBeenLastCalledWith(0xff);
+    expect(sim.spi.completeTransfer).toHaveBeenLastCalledWith(0xff);
   });
 
-  it('cleanup restores previous onTransmit and is callable without SPI', () => {
+  it('cleanup restores previous onByte and is callable without SPI', () => {
     const sim = makeSPISim();
     const logic = PartSimulationRegistry.get('microsd-card')!;
     const cleanup = logic.attachEvents!(makeElement(), sim as any, noPins);
     expect(() => cleanup()).not.toThrow();
-    expect(sim.spi.onTransmit).toBeNull();
+    expect(sim.spi.onByte).toBeNull();
   });
 
   it('no-op when simulator has no spi', () => {
@@ -866,5 +866,116 @@ describe('pcf8574 — ESP32 relay path', () => {
     cleanup();
     expect(sim.unregisterSensor).toHaveBeenCalledWith(239);
     expect(sim.removeI2CTransactionListener).toHaveBeenCalledWith(0x27);
+  });
+});
+
+// ─── microSD card — SD-over-SPI storage (Phase 1) ───────────────────────────────
+describe('microsd-card — SD-over-SPI storage', () => {
+  function setupSD(props: Record<string, unknown> = {}) {
+    const sim = makeSPISim();
+    const replies: number[] = [];
+    sim.spi.completeTransfer = vi.fn((r: number) => replies.push(r));
+    const logic = PartSimulationRegistry.get('microsd-card')!;
+    const cleanup = logic.attachEvents!(makeElement(props), sim as any, noPins);
+    const send = (bytes: number[]) => {
+      for (const b of bytes) sim.spi.onByte!(b);
+    };
+    return { sim, replies, send, cleanup };
+  }
+
+  const cmd = (index: number, arg = 0): number[] => [
+    0x40 | index,
+    (arg >>> 24) & 0xff,
+    (arg >>> 16) & 0xff,
+    (arg >>> 8) & 0xff,
+    arg & 0xff,
+    0x95,
+  ];
+  const FF = (n: number): number[] => new Array(n).fill(0xff);
+
+  // SDSC byte addressing: block N is byte offset N*512.
+  const at = (block: number): number => block * 512;
+
+  /** Read a 512-byte block via CMD17 and return its data bytes. */
+  function readSdBlock(
+    send: (b: number[]) => void,
+    replies: number[],
+    block: number,
+  ): number[] {
+    replies.length = 0;
+    send(cmd(17, at(block)));
+    send(FF(520));
+    const t = replies.indexOf(0xfe); // data-start token (latency-robust)
+    return replies.slice(t + 1, t + 1 + 512);
+  }
+
+  it('init handshake: CMD0/CMD8/ACMD41/CMD58 give the expected R1/R7/OCR', () => {
+    const { send, replies } = setupSD();
+    // 1-byte Ncr latency: the response is shifted out AFTER the 6 command bytes,
+    // so R1 lands on the first 0xFF clock (index 6), not the last command byte.
+    const after = (c: number[], extra: number) => {
+      replies.length = 0;
+      send(c);
+      send(FF(extra));
+    };
+    after(cmd(0), 1);
+    expect(replies[6]).toBe(0x01); // idle
+    after(cmd(8, 0x1aa), 5);
+    expect(replies.slice(6, 11)).toEqual([0x01, 0x00, 0x00, 0x01, 0xaa]); // R7
+    after(cmd(55), 1);
+    expect(replies[6]).toBe(0x01);
+    after(cmd(41), 1);
+    expect(replies[6]).toBe(0x00); // ACMD41 ready
+    after(cmd(58), 5);
+    expect(replies.slice(6, 11)).toEqual([0x00, 0x80, 0xff, 0x80, 0x00]); // OCR (SDSC)
+  });
+
+  it('writes a block (CMD24 + data) and reads it back identically (CMD17)', () => {
+    const { send, replies } = setupSD();
+    const data = Array.from({ length: 512 }, (_, i) => (i * 7 + 3) & 0xff);
+    // CMD24 write block 5, then: gap, start token, 512 data, 2 CRC, + a clock
+    send(cmd(24, at(5)));
+    send([0xff, 0xfe, ...data, 0xff, 0xff, 0xff]);
+    expect(replies).toContain(0x05); // data-response: accepted
+    // Read it back
+    expect(readSdBlock(send, replies, 5)).toEqual(data);
+  });
+
+  it('unwritten blocks read back as zeros', () => {
+    const { send, replies } = setupSD();
+    expect(readSdBlock(send, replies, 999)).toEqual(new Array(512).fill(0));
+  });
+
+  it('CMD9 returns a 16-byte CSD v2 reflecting the configured capacity', () => {
+    const { send, replies } = setupSD();
+    send(cmd(9));
+    send(FF(20));
+    const t = replies.indexOf(0xfe);
+    const csd = replies.slice(t + 1, t + 1 + 16);
+    expect(csd.length).toBe(16);
+    expect(csd[0] & 0xc0).toBe(0x40); // CSD structure v2
+    // 64 MB -> C_SIZE = 64MB/512KB - 1 = 127 -> low byte 0x7F
+    expect(csd[9]).toBe(0x7f);
+  });
+
+  it('reads a pre-injected FAT image via element.sdImageData', () => {
+    const block0 = Array.from({ length: 512 }, (_, i) => (i ^ 0x5a) & 0xff);
+    const block1 = Array.from({ length: 512 }, (_, i) => (i + 200) & 0xff);
+    const image = Uint8Array.from([...block0, ...block1]);
+    const { send, replies } = setupSD({ sdImageData: image });
+    expect(readSdBlock(send, replies, 0)).toEqual(block0);
+    expect(readSdBlock(send, replies, 1)).toEqual(block1);
+  });
+
+  it('multi-block write (CMD25) stores consecutive blocks until the stop token', () => {
+    const { send, replies } = setupSD();
+    const a = Array.from({ length: 512 }, (_, i) => (i + 1) & 0xff);
+    const b = Array.from({ length: 512 }, (_, i) => (i + 2) & 0xff);
+    send(cmd(25, at(10))); // write starting at block 10
+    send([0xfc, ...a, 0xff, 0xff]); // block 10 (multi data token 0xFC)
+    send([0xfc, ...b, 0xff, 0xff]); // block 11
+    send([0xfd]); // stop-transmission token
+    expect(readSdBlock(send, replies, 10)).toEqual(a);
+    expect(readSdBlock(send, replies, 11)).toEqual(b);
   });
 });

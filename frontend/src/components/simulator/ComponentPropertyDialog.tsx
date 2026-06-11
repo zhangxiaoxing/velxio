@@ -8,6 +8,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ComponentMetadata } from '../../types/component-metadata';
+import { SdCardPanel } from './SdCardPanel';
+import type { UploadedSdFile } from '../../utils/sdCardFiles';
 import './ComponentPropertyDialog.css';
 
 function isEditable(prop: any): boolean {
@@ -244,6 +246,15 @@ export const ComponentPropertyDialog: React.FC<ComponentPropertyDialogProps> = (
               );
             })}
         </div>
+      )}
+
+      {/* microSD card — upload your own files (paid). Free auto-copy of the
+          project's files happens at simulation start, not here. */}
+      {componentMetadata.id === 'microsd-card' && (
+        <SdCardPanel
+          files={(componentProperties.sdFiles as UploadedSdFile[] | undefined) ?? []}
+          onChange={(next) => onPropertyChange?.(componentId, 'sdFiles', next)}
+        />
       )}
 
       </div>{/* /component-property-body */}

@@ -12,6 +12,7 @@ import { picowWifiExamples } from './examples-picow-wifi';
 import { epaperExamples } from './examples-displays-epaper';
 import { retroIntelExamples } from './examples-retro-intel';
 import { robotDesktopExamples } from './examples-robot-desktop';
+import { microsdExamples } from './examples-storage-microsd';
 
 /** Per-board setup for multi-board examples */
 export interface ExampleBoard {
@@ -9737,6 +9738,7 @@ export const exampleProjects: ExampleProject[] = [
   ...epaperExamples,
   ...retroIntelExamples,
   ...robotDesktopExamples,
+  ...microsdExamples,
 ];
 
 // Get examples by category

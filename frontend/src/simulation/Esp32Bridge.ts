@@ -110,6 +110,13 @@ export class Esp32Bridge {
   /** Set to true before connect() to enable WiFi NIC in QEMU. */
   wifiEnabled = false;
 
+  /**
+   * Base64 FAT16 image for an on-canvas microSD card, set before connect().
+   * Undefined when no card is present. Forwarded to the worker, which attaches
+   * it as a synchronous SD-over-SPI slave (esp32_sd_slave.SdSpiSlave).
+   */
+  sdImageB64: string | undefined = undefined;
+
   // Callbacks wired up by useSimulatorStore
   onSerialData: ((char: string, uart?: number) => void) | null = null;
   onPinChange: ((gpioPin: number, state: boolean) => void) | null = null;
@@ -304,6 +311,7 @@ export class Esp32Bridge {
           ...(this._pendingFirmware ? { firmware_b64: this._pendingFirmware } : {}),
           sensors: this._pendingSensors,
           wifi_enabled: this.wifiEnabled,
+          ...(this.sdImageB64 ? { sd_card: { image_b64: this.sdImageB64 } } : {}),
         },
       });
     };
