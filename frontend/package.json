@@ -2,7 +2,7 @@
   "name": "velxio",
   "homepage": "https://velxio.dev",
   "private": true,
-  "version": "2.0.1",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "generate:metadata": "cd .. && npx tsx scripts/generate-component-metadata.ts",
