@@ -507,9 +507,14 @@ PartSimulationRegistry.register('buzzer', {
       : null;
 
     let audioCtx: AudioContext | null = null;
-    let oscillator: OscillatorNode | null = null;
-    let gainNode: GainNode | null = null;
+    let activeOsc: OscillatorNode | null = null; // the note currently sounding (one per click)
+    let activeGain: GainNode | null = null;
     let isSounding = false;
+    // Once the pin is driven by hardware PWM (analogWrite/Timer), the PWM
+    // handler owns the audio. The digital HIGH/LOW path is only for tone()
+    // (software pin toggling); on a PWM pin its ~490Hz carrier would otherwise
+    // fire spurious onsets at the duty edges. This flag mutes that path.
+    let pwmActive = false;
     const el = element as any;
 
     // Timer2 register addresses
@@ -536,36 +541,133 @@ PartSimulationRegistry.register('buzzer', {
       return F_CPU / (2 * prescaler * (ocr2a + 1));
     }
 
-    function startTone(freq: number) {
-      if (!audioCtx) {
-        audioCtx = new AudioContext();
-        gainNode = audioCtx.createGain();
-        gainNode.gain.value = 0.1;
-        gainNode.connect(audioCtx.destination);
+    // ── Sample-accurate audio ────────────────────────────────────────────
+    // PWM duty events arrive in per-frame batches (~16ms), so starting a note
+    // "now" quantises every onset to the animation frame and a metronome
+    // wobbles. We instead schedule each note on the AudioContext clock at the
+    // time it happened in the simulation, with a small look-ahead. ONE
+    // oscillator PER NOTE (created on the onset, stopped on the note-off) with a
+    // short attack/release ramp: each note has a fresh fixed frequency and we
+    // never automate gain/frequency on a long-lived node — Firefox in particular
+    // clicks/pops on abrupt gain steps and glitches on live frequency changes.
+    const LOOKAHEAD = 0.025; // target audio latency (~1-2 frames; aligns with the display)
+    const ATTACK = 0.002; // 2 ms fade-in  — removes the start click/pop
+    const RELEASE = 0.003; // 3 ms fade-out — removes the end click/pop
+    let playWhen: number | null = null; // next scheduled audio time (monotonic)
+    let lastSimMs: number | null = null; // simulated time of the previous onset
+    let onWhen: number | null = null; // scheduled audio time of the current note's onset
+    let onSimMs: number | null = null; // simulated time of the current note's onset
+
+    function ensureCtx() {
+      if (!audioCtx) audioCtx = new AudioContext();
+      // Autoplay policy: the context starts 'suspended' until a user gesture.
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    // Schedule onsets by their SIMULATED inter-onset spacing — exact and even,
+    // because the firmware's clock is precise — advancing playWhen by the sim
+    // gap (timeMs delta). A light pull holds the scheduling latency near
+    // LOOKAHEAD, which bounds the slow sim↔audio clock drift and keeps the click
+    // aligned with the on-screen playhead. Because the spacing comes straight
+    // from the simulation (not a wall-clock average), turning a control (BPM,
+    // K…) re-locks immediately and the rhythm stays even — no bursts, no
+    // overlaps. whenFor sees ONLY onsets; note-offs are placed relative to their
+    // own onset in stopTone.
+    function whenFor(timeMs: number | undefined): number {
+      const ctx = audioCtx!;
+      const now = ctx.currentTime;
+      if (timeMs === undefined || playWhen === null || lastSimMs === null) {
+        playWhen = Math.max(now + LOOKAHEAD, (playWhen ?? 0) + 0.001);
+        if (timeMs !== undefined) lastSimMs = timeMs;
+        return playWhen;
       }
-      // Browser autoplay policy: AudioContext starts in 'suspended' state
-      // until a user gesture has occurred. Resume it here so sound plays.
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+      const dSim = Math.max(0, (timeMs - lastSimMs) / 1000); // exact, even sim spacing
+      let when = playWhen + dSim;
+      when -= (when - now - LOOKAHEAD) * 0.2; // hold latency / absorb clock drift
+      if (when < now + 0.003) when = now + 0.003;
+      if (when <= playWhen) when = playWhen + 0.001; // strictly monotonic
+      playWhen = when;
+      lastSimMs = timeMs;
+      return when;
+    }
+
+    // Ramp the note currently sounding down to silence ending at audio time
+    // `off` and schedule its stop. Shared by stopTone (note-off) and the
+    // monophonic guard in startTone (a pitch change with no note-off). Keeps the
+    // envelope valid: never release before this note's own attack has finished,
+    // nor in the past.
+    //
+    // Bounded-overlap note (guard path): on a normal metronome/melody — onsets
+    // tens-to-hundreds of ms apart — the old note ends ~RELEASE before the next
+    // onset. On a degenerate sub-4 ms onset (a >250-note/s trill, or two tone()
+    // calls at the same simulated timestamp — neither of which a passive buzzer
+    // produces) the `onWhen + ATTACK` floor pushes `off` past the next onset, so
+    // two oscillators overlap for at most ~ATTACK+RELEASE (≈5 ms). That is
+    // inaudible and still leak-free (one stop per note). We deliberately keep the
+    // attack-finished envelope rather than clamp `off` down to the onset, which
+    // would start the down-ramp from a gain that never reached its peak.
+    function releaseActive(off: number) {
+      const ctx = audioCtx;
+      if (!ctx || !activeOsc || !activeGain) return;
+      if (onWhen !== null && off < onWhen + ATTACK + 0.002) off = onWhen + ATTACK + 0.002;
+      if (off < ctx.currentTime + 0.003) off = ctx.currentTime + 0.003;
+      try {
+        activeGain.gain.setValueAtTime(0.1, off);
+        activeGain.gain.linearRampToValueAtTime(0, off + RELEASE);
+        activeOsc.stop(off + RELEASE + 0.001);
+      } catch {
+        /* already scheduled */
       }
-      if (oscillator) {
-        oscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.01);
-        return;
-      }
-      oscillator = audioCtx.createOscillator();
-      oscillator.type = 'square';
-      oscillator.frequency.value = freq;
-      oscillator.connect(gainNode!);
-      oscillator.start();
+      activeOsc = null;
+      activeGain = null;
+    }
+
+    function startTone(freq: number, timeMs?: number) {
+      ensureCtx();
+      const ctx = audioCtx!;
+      const when = whenFor(timeMs); // the scheduler tracks ONSETS only (clean rhythm)
+      // Monophonic guard: a pitch change with no intervening note-off (a melody —
+      // consecutive tone() calls) must REPLACE the current note, not stack a new
+      // oscillator on top. Release the live note so it ends as the new one begins
+      // (seamless legato) instead of orphaning it to play forever. Reads the
+      // PREVIOUS note's onWhen, so it must run before onWhen is reassigned below.
+      if (activeOsc && activeGain) releaseActive(when);
+      onWhen = when;
+      onSimMs = timeMs ?? null;
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = freq; // fixed for the life of this note (no live change)
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(0.1, when + ATTACK);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(when);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          g.disconnect();
+        } catch {
+          /* already torn down */
+        }
+      };
+      activeOsc = osc;
+      activeGain = g;
       isSounding = true;
       if (el.playing !== undefined) el.playing = true;
     }
 
-    function stopTone() {
-      if (oscillator) {
-        oscillator.stop();
-        oscillator.disconnect();
-        oscillator = null;
+    function stopTone(timeMs?: number) {
+      const ctx = audioCtx;
+      if (ctx && activeOsc && activeGain) {
+        // Note-off relative to its own onset, preserving the exact click length
+        // from the simulation (not via the onset scheduler, which would smear
+        // the short on→off and long off→on gaps together).
+        const off =
+          onWhen !== null && onSimMs !== null && timeMs !== undefined
+            ? onWhen + Math.max(0.004, (timeMs - onSimMs) / 1000)
+            : ctx.currentTime + 0.02;
+        releaseActive(off);
       }
       isSounding = false;
       if (el.playing !== undefined) el.playing = false;
@@ -576,13 +678,14 @@ PartSimulationRegistry.register('buzzer', {
 
     if (pinSIG !== null && pinManager) {
       unsubscribers.push(
-        pinManager.onPwmChange(pinSIG, (_: number, dc: number) => {
+        pinManager.onPwmChange(pinSIG, (_: number, dc: number, timeMs?: number) => {
+          pwmActive = true;
           const cpu = (avrSimulator as any).cpu;
           if (dc > 0) {
             const freq = cpu ? getFrequency(cpu) : 440;
-            startTone(Math.max(20, Math.min(20000, freq)));
+            startTone(Math.max(20, Math.min(20000, freq)), timeMs);
           } else {
-            stopTone();
+            stopTone(timeMs);
           }
         }),
       );
@@ -594,6 +697,7 @@ PartSimulationRegistry.register('buzzer', {
       if (sigResolver) {
         unsubscribers.push(
           sigResolver.onChange((state) => {
+            if (pwmActive) return; // PWM-driven: the duty handler owns audio
             if (!isSounding && state === 'HIGH') {
               const cpu = (avrSimulator as any).cpu;
               const freq = cpu ? getFrequency(cpu) : 440;
@@ -606,6 +710,7 @@ PartSimulationRegistry.register('buzzer', {
       } else {
         unsubscribers.push(
           pinManager.onPinChange(pinSIG, (_: number, state: boolean) => {
+            if (pwmActive) return; // PWM-driven: the duty handler owns audio
             if (!isSounding && state) {
               const cpu = (avrSimulator as any).cpu;
               const freq = cpu ? getFrequency(cpu) : 440;
@@ -617,7 +722,24 @@ PartSimulationRegistry.register('buzzer', {
     }
 
     return () => {
-      stopTone();
+      if (activeOsc) {
+        try {
+          activeOsc.stop();
+          activeOsc.disconnect();
+          activeGain?.disconnect();
+        } catch {
+          /* already stopped */
+        }
+        activeOsc = null;
+        activeGain = null;
+      }
+      isSounding = false;
+      pwmActive = false;
+      if (el.playing !== undefined) el.playing = false;
+      playWhen = null;
+      lastSimMs = null;
+      onWhen = null;
+      onSimMs = null;
       if (audioCtx) {
         audioCtx.close();
         audioCtx = null;
