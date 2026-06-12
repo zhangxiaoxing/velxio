@@ -460,6 +460,20 @@ export class RP2040Simulator {
           this.feedCyw43Word(value);
           return origPush(value);
         };
+        // Reset the gSPI framing at each transfer boundary. cyw43_spi_transfer
+        // does pio_sm_restart before pushing the count words, so this keeps the
+        // sniffer deterministic even across the firmware-stream fast-path.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (sm as any).restart === 'function') {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const origRestart: () => void = (sm as any).restart.bind(sm);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (sm as any).restart = () => { this.cyw43Sniffer?.reset(); return origRestart(); };
+          this.cyw43HookedFifos.push({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            restore: () => { (sm as any).restart = origRestart; },
+          });
+        }
         // Serve the chip's response when the driver's DMA actually reads the
         // RX FIFO. Pushing into the FIFO eagerly raced the async DMA/PIO and
         // the data arrived late or was lost; serving on pull keeps it in lock

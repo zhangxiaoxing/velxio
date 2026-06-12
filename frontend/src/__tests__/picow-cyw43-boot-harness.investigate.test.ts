@@ -48,19 +48,26 @@ const INJECT_CODE = [
   'import network, time',
   'print("STEP_IMPORT_OK")',
   'w=network.WLAN(network.STA_IF)',
-  'print("STEP_WLAN_OBJ_OK pre_active=" + str(w.active()))',
+  'print("STEP_WLAN_OBJ_OK")',
   'try:',
   '    w.active(True)',
-  '    print("STEP_ACTIVE active=" + str(w.active()) + " status=" + str(w.status()))',
   'except Exception as e:',
   '    print("ACTIVE_EXC " + repr(e))',
+  // Give the background driver task time to finish wifi_on (CLM load + IOCTLs).
+  'for i in range(40):',
+  '    print("ACT", i, "active=" + str(w.active()) + " status=" + str(w.status()))',
+  '    if w.active():',
+  '        break',
+  '    time.sleep_ms(150)',
   'try:',
   '    w.connect("Velxio-GUEST", "")',
   '    print("STEP_CONNECT_CALLED status=" + str(w.status()))',
   'except Exception as e:',
   '    print("CONNECT_EXC " + repr(e))',
-  'for i in range(4):',
+  'for i in range(20):',
   '    print("POLL", i, "status", w.status(), "conn", w.isconnected())',
+  '    if w.isconnected():',
+  '        break',
   '    time.sleep_ms(200)',
   'print("HARNESS_DONE")',
 ].join('\n');
@@ -163,12 +170,26 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
       }
 
       let rxPulled = 0;
+      let restartCount = 0;
       for (const pio of (sim.rp2040 as any).pio) {
         for (const sm of pio.machines) {
           const tx = sm.txFIFO;
           if (!tx) continue;
           const orig = tx.push.bind(tx);
-          tx.push = (v: number) => { pushCount++; rawWords.push(v >>> 0); feedWord(v, sm); return orig(v); };
+          tx.push = (v: number) => {
+            pushCount++;
+            rawWords.push(v >>> 0);
+            if (rawWords.length > 600) rawWords.splice(0, rawWords.length - 400); // ring
+            feedWord(v, sm);
+            return orig(v);
+          };
+          // Reset the sniffer at each transfer boundary: cyw43_spi_transfer
+          // calls pio_sm_restart before pushing the count words, so this keeps
+          // framing deterministic even after the firmware-stream fast-path.
+          if (typeof sm.restart === 'function') {
+            const origRestart = sm.restart.bind(sm);
+            sm.restart = () => { restartCount++; sniffer.reset(); return origRestart(); };
+          }
           const rx = sm.rxFIFO;
           if (rx) {
             const origPull = rx.pull.bind(rx);
@@ -247,11 +268,12 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           '===== TOP COMMAND COUNTS (poll loops) =====\n' +
           polls.map(([k, n]) => `  ${String(n).padStart(6)}  ${k}`).join('\n') + '\n\n' +
           `===== FUNCTION HISTOGRAM F0..F3 = ${funcHist.join(',')} =====\n` +
-          `===== initInbound=${initInbound} statusReads=${statusReads} statusReadsWithPkt=${statusReadsWithPkt} finalInbound=${chip.debugInboundCount()} =====\n\n` +
+          `===== initInbound=${initInbound} statusReads=${statusReads} statusReadsWithPkt=${statusReadsWithPkt} finalInbound=${chip.debugInboundCount()} restarts=${restartCount} =====\n\n` +
           '===== F2/IOCTL TRANSFERS (total seen, non-ring) =====\n' +
           `count=${f2Log.length}\n` + f2Log.join('\n') + '\n\n' +
-          '===== TRACE TAIL (post-firmware) =====\n' + trace.slice(-120).join('\n') + '\n';
-        void rawWords;
+          '===== TRACE TAIL (post-firmware) =====\n' + trace.slice(-120).join('\n') + '\n\n' +
+          '===== LAST RAW TX WORDS (hex) — the end of the run =====\n' +
+          rawWords.slice(-70).map((w) => w.toString(16).padStart(8, '0')).join(' ') + '\n';
         try { writeFileSync('/tmp/cyw43-trace.txt', report); } catch { /* noop */ }
         resolve({
           serial,
