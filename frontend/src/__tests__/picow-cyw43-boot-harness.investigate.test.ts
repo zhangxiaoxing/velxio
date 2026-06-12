@@ -86,7 +86,21 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
     }>((resolve) => {
       const sim = new Simulator();
       sim.rp2040.loadBootrom(bootromB1);
-      sim.rp2040.logger = new ConsoleLogger(LogLevel.Error);
+      // Custom non-throwing logger: capture CPU faults (e.g. unaligned reads)
+      // with the PC so we can locate corruption WITHOUT aborting the run.
+      void LogLevel; void ConsoleLogger;
+      let faultCount = 0;
+      const faultLog: string[] = [];
+      sim.rp2040.logger = {
+        debug() {}, info() {}, warn() {},
+        error: (_comp: string, msg: string) => {
+          faultCount++;
+          if (faultLog.length < 25) {
+            const pc = ((sim.rp2040 as any).core?.PC ?? 0) >>> 0;
+            faultLog.push(`PC=0x${pc.toString(16)} ${msg}`);
+          }
+        },
+      } as any;
 
       const fwBlocks = loadUF2(new Uint8Array(readFileSync(FW_PATH)), sim.rp2040.flash);
       let usbConnected = false;
@@ -104,6 +118,9 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
       const rawWords: number[] = [];
       const trace: string[] = [];
       const f2Log: string[] = []; // F2/IOCTL transfers, NOT subject to the ring
+      const postF2: string[] = []; // verbatim trace from the first F2 write onward
+      let f2Seen = false;
+      let restartsAtClm = -1; // restartCount at the moment clm_load goes out
       const funcHist = [0, 0, 0, 0]; // count of decoded gSPI functions F0..F3
       const cmdCounts = new Map<string, number>();
       let ledOn = false;
@@ -131,6 +148,7 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           if (ev.kind === 'header') {
             const k = key(ev.cmd);
             cmdCounts.set(k, (cmdCounts.get(k) ?? 0) + 1);
+            if (f2Seen && postF2.length < 400) postF2.push(`HDR ${formatCmd(ev.cmd)}`);
           } else if (ev.kind === 'payload') {
             // Histogram of decoded functions + capture EVERY F2 transfer.
             funcHist[ev.cmd.function & 3]++;
@@ -140,7 +158,19 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
               if (chip.debugInboundCount() > 0) statusReadsWithPkt++;
             }
             if (ev.cmd.function === 2 && f2Log.length < 60) {
-              f2Log.push(`${ev.cmd.write ? 'WR' : 'RD'} F2 a=0x${ev.cmd.address.toString(16)} len=${ev.payload.length || ev.readBytes}`);
+              const head = Array.from(ev.payload.slice(0, 32))
+                .map((b) => b.toString(16).padStart(2, '0')).join(' ');
+              f2Log.push(`${ev.cmd.write ? 'WR' : 'RD'} F2 a=0x${ev.cmd.address.toString(16)} len=${ev.payload.length || ev.readBytes}` +
+                (ev.cmd.write ? `\n     bytes: ${head}` : ''));
+            }
+            if (ev.cmd.function === 2 && ev.cmd.write && !f2Seen) { f2Seen = true; restartsAtClm = restartCount; }
+            // Once clm_load (first F2 write) goes out, capture EVERYTHING verbatim
+            // (no ring) so we can see exactly where the driver stalls afterward.
+            if (f2Seen && postF2.length < 400) {
+              postF2.push(`${formatCmd(ev.cmd)} rx=${ev.readBytes}` +
+                (ev.cmd.write && ev.payload.length > 0 && ev.payload.length < 8
+                  ? ` =0x${((ev.payload[0] | (ev.payload[1] << 8) | (ev.payload[2] << 16) | (ev.payload[3] << 24)) >>> 0).toString(16)}`
+                  : ''));
             }
             // Skip the ~3500 firmware-block writes (len>=64) AND the backplane
             // window-address writes (0x1000a/b/c) that bracket each block —
@@ -164,6 +194,11 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
                   .map((b) => b.toString(16).padStart(2, '0')).join(' ');
                 trace.push(`<- (${reply.length}B) ${hex}${reply.length > 8 ? ' ...' : ''}`);
               }
+              if (f2Seen && postF2.length < 400) {
+                const hex = Array.from(reply.slice(0, 16))
+                  .map((b) => b.toString(16).padStart(2, '0')).join(' ');
+                postF2.push(`   <- (${reply.length}B) ${hex}${reply.length > 16 ? ' ...' : ''}`);
+              }
             }
           }
         }
@@ -171,17 +206,42 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
 
       let rxPulled = 0;
       let restartCount = 0;
+      let txPulls = 0;
+      let smSteps = 0;
       for (const pio of (sim.rp2040 as any).pio) {
         for (const sm of pio.machines) {
           const tx = sm.txFIFO;
           if (!tx) continue;
-          const orig = tx.push.bind(tx);
+          // Make the TX FIFO NON-DROPPING by swapping its fixed 4-deep backing
+          // for an unbounded queue. rp2040js's FIFO.push silently drops when
+          // `used === length` (the DMA outruns the PIO drain on large bursts).
+          // Real hardware paces the DMA with DREQ so it never drops; the dropped
+          // words corrupt the 260-word F2 IOCTL writes (clm_load, ioctls), which
+          // is why no F2 payload ever frames. An unbounded queue retains every
+          // word so the PIO drains the complete stream — keeping the sniffer
+          // (hooked on push) and the driver's view identical (no phantom reads).
+          // Head-pointer queue: pull() is O(1) amortized (NO Array.shift, which is
+          // O(n) and turned the whole thing O(n^2) — the firmware download stalled).
+          const q: number[] = [];
+          let head = 0;
+          Object.defineProperty(tx, 'full', { get: () => false, configurable: true });
+          Object.defineProperty(tx, 'empty', { get: () => head >= q.length, configurable: true });
+          Object.defineProperty(tx, 'itemCount', { get: () => q.length - head, configurable: true });
+          tx.peek = () => (head < q.length ? q[head] : 0);
+          tx.reset = () => { q.length = 0; head = 0; };
           tx.push = (v: number) => {
             pushCount++;
             rawWords.push(v >>> 0);
             if (rawWords.length > 600) rawWords.splice(0, rawWords.length - 400); // ring
             feedWord(v, sm);
-            return orig(v);
+            q.push(v >>> 0);
+          };
+          tx.pull = () => {
+            txPulls++;
+            if (head >= q.length) return 0;
+            const v = q[head++];
+            if (head > 8192 && head * 2 > q.length) { q.splice(0, head); head = 0; } // compact
+            return v;
           };
           // Reset the sniffer at each transfer boundary: cyw43_spi_transfer
           // calls pio_sm_restart before pushing the count words, so this keeps
@@ -203,7 +263,42 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
             };
           }
         }
+        // Crank the PIO step-rate. rp2040js runs the PIO on its own setTimeout
+        // loop at only 1000 steps/tick (pio.run) while the CPU's execute() burns
+        // 1,000,000 instructions/tick — so a CPU tick (~hundreds of ms wall)
+        // starves the PIO, which only gets 1000 steps between ticks. With a
+        // non-dropping FIFO the PIO must bit-bang every firmware word, making the
+        // ~224KB download take 1000x too long. The gSPI PIO runs near the system
+        // clock (clkdiv ~1-2), so let it do up to 1M steps/tick, breaking early
+        // once all TX FIFOs are drained to avoid spinning when idle.
+        if (typeof pio.run === 'function') {
+          pio.run = () => {
+            for (let i = 0; i < 1_000_000 && !pio.stopped; i++) {
+              pio.step();
+              if (i >= 2000 && (i & 1023) === 0) {
+                let pending = false;
+                for (const m of pio.machines) {
+                  if (m.txFIFO && !m.txFIFO.empty) { pending = true; break; }
+                }
+                if (!pending) break;
+              }
+            }
+            if (!pio.stopped) pio.runTimer = setTimeout(() => pio.run(), 0);
+          };
+        }
       }
+
+      // Drive the WL_HOST_WAKE line (GPIO24 on Pico W). The driver's
+      // poll_device gates ALL bus access on this pin being high until it has
+      // received its first packet (cyw43_ll.c had_successful_packet). Without
+      // it, the first IOCTL (clm_load) is sent but the driver then polls
+      // forever getting -1 and never reads the response. Active-high.
+      let hostWakeHigh = false;
+      chip.onHostWake((active: boolean) => {
+        hostWakeHigh = active;
+        try { (sim.rp2040 as any).gpio[24].setInputValue(active); } catch { /* noop */ }
+      });
+      void hostWakeHigh;
 
       // ── raw REPL injection (mirrors test_micropython_pico.mjs) ──
       const cdc = new USBCDC(sim.rp2040.usbCtrl);
@@ -253,11 +348,36 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
       };
 
       let finished = false;
-      const deadline = setTimeout(finish, 60_000);
+      // Sample the CPU PC between sim ticks to find busy-wait loops (the driver
+      // blocks in active(True) with no bus activity, so a PC histogram localizes
+      // the stuck loop — DMA wait, TXSTALL wait, or a delay).
+      const pcHist = new Map<number, number>();
+      const pcSampler = setInterval(() => {
+        const pc = ((sim.rp2040 as any).core?.PC ?? 0) >>> 0;
+        pcHist.set(pc, (pcHist.get(pc) ?? 0) + 1);
+      }, 20);
+      const deadline = setTimeout(finish, 70_000);
       function finish() {
         if (finished) return;
         finished = true;
         clearTimeout(deadline);
+        clearInterval(pcSampler);
+        // Snapshot the PIO/SM state BEFORE stopping — this is the deadlock state.
+        let pioState = '';
+        try {
+          let pi = 0;
+          for (const pio of (sim.rp2040 as any).pio) {
+            pioState += `PIO${pi} stopped=${pio.stopped} fdebug=0x${(pio.fdebug >>> 0).toString(16)} txStall=0x${(pio.txStall >>> 0).toString(16)}\n`;
+            let si = 0;
+            for (const sm of pio.machines) {
+              const tx = sm.txFIFO;
+              pioState += `  SM${si} en=${sm.enabled} waiting=${sm.waiting} waitType=${sm.waitType} ` +
+                `pc=${sm.pc ?? '?'} txDepth=${tx ? tx.itemCount : '?'} rxDepth=${sm.rxFIFO ? sm.rxFIFO.itemCount : '?'}\n`;
+              si++;
+            }
+            pi++;
+          }
+        } catch (e) { pioState = `pioState err: ${String(e)}`; }
         try { sim.stop(); } catch { /* noop */ }
         const polls = [...cmdCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
         const report =
@@ -268,9 +388,19 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           '===== TOP COMMAND COUNTS (poll loops) =====\n' +
           polls.map(([k, n]) => `  ${String(n).padStart(6)}  ${k}`).join('\n') + '\n\n' +
           `===== FUNCTION HISTOGRAM F0..F3 = ${funcHist.join(',')} =====\n` +
-          `===== initInbound=${initInbound} statusReads=${statusReads} statusReadsWithPkt=${statusReadsWithPkt} finalInbound=${chip.debugInboundCount()} restarts=${restartCount} =====\n\n` +
+          `===== initInbound=${initInbound} statusReads=${statusReads} statusReadsWithPkt=${statusReadsWithPkt} finalInbound=${chip.debugInboundCount()} restarts=${restartCount} =====\n` +
+          `===== pushCount=${pushCount} txPulls=${txPulls} smSteps=${smSteps} =====\n` +
+          `===== IOCTL ${chip.debugIoctlStats()} =====\n` +
+          '===== IOCTL SEQUENCE =====\n' + chip.debugIoctlLog().map((s, i) => `  ${i}: ${s}`).join('\n') + '\n' +
+          `===== restartsAtClm=${restartsAtClm} restartsFinal=${restartCount} rxPulled=${rxPulled} =====\n` +
+          `===== CPU FAULTS faultCount=${faultCount} =====\n` + faultLog.join('\n') + '\n' +
+          '===== HOT PCs (busy-wait localization) =====\n' +
+          [...pcHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)
+            .map(([pc, n]) => `  ${String(n).padStart(6)}  PC=0x${pc.toString(16)}`).join('\n') + '\n\n' +
+          '===== PIO/SM STATE AT DEADLINE (deadlock) =====\n' + pioState + '\n' +
           '===== F2/IOCTL TRANSFERS (total seen, non-ring) =====\n' +
           `count=${f2Log.length}\n` + f2Log.join('\n') + '\n\n' +
+          '===== POST-CLM_LOAD (verbatim from first F2 write) =====\n' + postF2.join('\n') + '\n\n' +
           '===== TRACE TAIL (post-firmware) =====\n' + trace.slice(-120).join('\n') + '\n\n' +
           '===== LAST RAW TX WORDS (hex) — the end of the run =====\n' +
           rawWords.slice(-70).map((w) => w.toString(16).padStart(8, '0')).join(' ') + '\n';
@@ -297,5 +427,5 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
     console.log('\n===== reachedImport=' + result.reachedImport + ' reachedActive=' + result.reachedActive + ' =====');
 
     expect(result.trace.length).toBeGreaterThan(0);
-  }, 120_000);
+  }, 90_000);
 });

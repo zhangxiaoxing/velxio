@@ -131,12 +131,32 @@ export class Cyw43Emulator {
   private eventMask = new Uint8Array(32); // up to 256 event types
   private inboundEvents: Uint8Array[] = [];
 
+  // ── Debug counters (investigation harness only) ─────────────────
+  private _dbgF2Writes = 0;       // F2 write transfers received
+  private _dbgFramesDecoded = 0;  // SDPCM decode succeeded
+  private _dbgSdpcmFail = 0;      // SDPCM decode returned null
+  private _dbgIoctls = 0;         // handleIoctl invoked
+  private _dbgIoctlFail = 0;      // CDC decode returned null
+  private _dbgLastIoctl = -1;     // last cdc.cmd seen
+  private _dbgIoctlLog: string[] = []; // human-readable IOCTL sequence
+  debugIoctlStats(): string {
+    return `f2w=${this._dbgF2Writes} sdpcmOk=${this._dbgFramesDecoded} ` +
+      `sdpcmFail=${this._dbgSdpcmFail} ioctls=${this._dbgIoctls} ` +
+      `ioctlFail=${this._dbgIoctlFail} lastCmd=${this._dbgLastIoctl}`;
+  }
+  debugIoctlLog(): string[] { return this._dbgIoctlLog; }
+
   // ── Listeners ───────────────────────────────────────────────────
   private ledListeners: Listener<LedEvent>[] = [];
   private scanListeners: Listener<ScanEvent>[] = [];
   private connectListeners: Listener<ConnectEvent>[] = [];
   private disconnectListeners: Listener<DisconnectEvent>[] = [];
   private packetOutListeners: Listener<PacketOutEvent>[] = [];
+  // Host-wake (WL_HOST_WAKE / GPIO24) level listeners. The chip drives this
+  // pin high when it has a frame for the host; the driver gates poll_device on
+  // it until the first packet is received (cyw43_ll.c had_successful_packet).
+  private hostWakeListeners: Listener<boolean>[] = [];
+  private hostWakeAsserted = false;
 
   constructor(opts: Cyw43EmulatorOptions = {}) {
     this.now = opts.now ?? (() => Date.now());
@@ -166,6 +186,7 @@ export class Cyw43Emulator {
     }
     this.inboundEvents.push(sdpcm);
     this.f0Regs[F0.INTERRUPT >> 2] |= 0x40;
+    this.updateHostWake();
   }
 
   // ── Listener registration ───────────────────────────────────────
@@ -174,6 +195,23 @@ export class Cyw43Emulator {
   onConnect = (cb: Listener<ConnectEvent>) => this.add(this.connectListeners, cb);
   onDisconnect = (cb: Listener<DisconnectEvent>) => this.add(this.disconnectListeners, cb);
   onPacketOut = (cb: Listener<PacketOutEvent>) => this.add(this.packetOutListeners, cb);
+  /** Fires with the WL_HOST_WAKE pin level (true=high) whenever it changes. */
+  onHostWake = (cb: Listener<boolean>) => {
+    const off = this.add(this.hostWakeListeners, cb);
+    cb(this.hostWakeAsserted); // deliver current level on subscribe
+    return off;
+  };
+
+  /**
+   * Recompute the host-wake (GPIO24) level from the inbound-frame queue and
+   * notify listeners on a change. Active-high: high while a frame is pending.
+   */
+  private updateHostWake(): void {
+    const want = this.inboundEvents.length > 0;
+    if (want === this.hostWakeAsserted) return;
+    this.hostWakeAsserted = want;
+    for (const cb of this.hostWakeListeners) cb(want);
+  }
 
   private add<T>(arr: Listener<T>[], cb: Listener<T>): () => void {
     arr.push(cb);
@@ -238,6 +276,27 @@ export class Cyw43Emulator {
     // (symmetric with the bswap32 command decode). Validated: the clock-CSR
     // ALP/HT bits land in the byte the driver checks.
     return this.bigEndian ? bswap32(value >>> 0) : swap16(value >>> 0);
+  }
+
+  /**
+   * Encode an SDPCM frame for an F2 read. The frame rides the SAME byte-swapped
+   * DMA-in path as register reads (cyw43_spi_transfer sets channel bswap=true),
+   * so every 32-bit word must be run through encodeReadWord. Without this the
+   * frame lands byte-reversed in spid_buf: header_length reads back as garbage
+   * and the driver dereferences ioctl_header at an unaligned address (crash).
+   */
+  private encodeFrameWords(frame: Uint8Array): Uint8Array {
+    // F2/SDPCM traffic only happens after the bus switches to 32-bit big-endian;
+    // in the 16-bit boot regime (and the unit tests that exercise IOCTLs there)
+    // the frame is consumed raw, so pass it through unchanged.
+    if (!this.bigEndian) return frame;
+    const out = new Uint8Array(frame.length);
+    const whole = frame.length & ~3;
+    for (let i = 0; i < whole; i += 4) {
+      writeU32LE(out, i, this.encodeReadWord(readU32LE(frame, i)));
+    }
+    for (let i = whole; i < frame.length; i++) out[i] = frame[i]; // tail (gSPI is word-aligned)
+    return out;
   }
 
   /** True once the driver has switched the bus to 32-bit big-endian. */
@@ -378,8 +437,10 @@ export class Cyw43Emulator {
 
   private handleF2(cmd: Cyw43Cmd, _payload: Uint8Array, _rxBytes: number): Uint8Array | null {
     if (cmd.write) {
+      this._dbgF2Writes++;
       const frame = decodeSdpcm(_payload);
-      if (frame) this.handleHostFrame(frame.channel, frame.payload);
+      if (frame) { this._dbgFramesDecoded++; this.handleHostFrame(frame.channel, frame.payload); }
+      else this._dbgSdpcmFail++;
       return null;
     }
 
@@ -395,7 +456,8 @@ export class Cyw43Emulator {
     if (this.inboundEvents.length === 0) {
       this.f0Regs[F0.INTERRUPT >> 2] &= ~0x40;
     }
-    return out;
+    this.updateHostWake();
+    return this.encodeFrameWords(out);
   }
 
   // ── Host → chip frame dispatch ──────────────────────────────────
@@ -418,9 +480,13 @@ export class Cyw43Emulator {
   // ── IOCTL handler ───────────────────────────────────────────────
 
   private handleIoctl(cdcBytes: Uint8Array): void {
+    this._dbgIoctls++;
     const cdc = decodeCdc(cdcBytes);
-    if (!cdc) return;
-    const isGet = (cdc.flags & 0x1) === 0; // bit 0 clear = GET
+    if (!cdc) { this._dbgIoctlFail++; return; }
+    this._dbgLastIoctl = cdc.cmd;
+    // SDPCM_SET is 0x2 (bit 1) in the CDC flags; SDPCM_GET is 0. (cyw43_ll.c)
+    const ioctlKind = cdc.flags & 0x2;
+    const isGet = ioctlKind === 0;
     const data = cdc.payload;
     // For SET_VAR/GET_VAR, name is a NUL-terminated string at start of payload.
     let varName = '';
@@ -428,6 +494,9 @@ export class Cyw43Emulator {
     if (cdc.cmd === WLC.SET_VAR || cdc.cmd === WLC.GET_VAR) {
       varName = readCString(data, 0);
       varOff = varName.length + 1;
+    }
+    if (this._dbgIoctlLog.length < 60) {
+      this._dbgIoctlLog.push(`${isGet ? 'GET' : 'SET'} cmd=${cdc.cmd}${varName ? ' ' + varName : ''} dlen=${data.length} outlen=${cdc.outlen}`);
     }
     const reqId = (cdc.flags >>> 16) & 0xffff;
     let response: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
@@ -510,8 +579,8 @@ export class Cyw43Emulator {
     dv.setUint32(0, cdc.cmd, true);
     dv.setUint16(4, response.length, true);
     dv.setUint16(6, 0, true);
-    // Mirror the request-id in the upper 16 bits, set bit 0 to mark "response"
-    dv.setUint32(8, ((reqId & 0xffff) << 16) | (isGet ? 0 : 1), true);
+    // Mirror the request-id in the upper 16 bits and echo the SET/GET kind bit.
+    dv.setUint32(8, ((reqId & 0xffff) << 16) | ioctlKind, true);
     dv.setUint32(12, status >>> 0, true);
     replyCdc.set(response, CDC_HEADER_LEN);
     const sdpcm = encodeSdpcm({
