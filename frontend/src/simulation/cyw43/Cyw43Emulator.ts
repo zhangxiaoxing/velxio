@@ -243,6 +243,9 @@ export class Cyw43Emulator {
   /** True once the driver has switched the bus to 32-bit big-endian. */
   isBigEndian(): boolean { return this.bigEndian; }
 
+  /** Debug: queued chip→host frame count (for harness instrumentation). */
+  debugInboundCount(): number { return this.inboundEvents.length; }
+
   private handleF0(cmd: Cyw43Cmd, payload: Uint8Array, rxBytes: number): Uint8Array | null {
     if (cmd.write) {
       const word = readU32LE(payload, 0);

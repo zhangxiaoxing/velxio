@@ -86,6 +86,9 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
 
       // ── attach production Cyw43Emulator the way RP2040Simulator does ──
       const chip = new Cyw43Emulator();
+      const initInbound = chip.debugInboundCount();
+      let statusReadsWithPkt = 0;
+      let statusReads = 0;
       const sniffer = new PioBusSniffer();
       sniffer.setModeProvider(() => chip.isBigEndian());
       let pushCount = 0;
@@ -124,6 +127,11 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           } else if (ev.kind === 'payload') {
             // Histogram of decoded functions + capture EVERY F2 transfer.
             funcHist[ev.cmd.function & 3]++;
+            // Track SPI_STATUS reads and whether a frame was queued at the time.
+            if (!ev.cmd.write && ev.cmd.function === 0 && ev.cmd.address === 0x08) {
+              statusReads++;
+              if (chip.debugInboundCount() > 0) statusReadsWithPkt++;
+            }
             if (ev.cmd.function === 2 && f2Log.length < 60) {
               f2Log.push(`${ev.cmd.write ? 'WR' : 'RD'} F2 a=0x${ev.cmd.address.toString(16)} len=${ev.payload.length || ev.readBytes}`);
             }
@@ -238,7 +246,8 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           '===== SERIAL OUTPUT (tail 2500) =====\n' + serial.slice(-2500) + '\n\n' +
           '===== TOP COMMAND COUNTS (poll loops) =====\n' +
           polls.map(([k, n]) => `  ${String(n).padStart(6)}  ${k}`).join('\n') + '\n\n' +
-          `===== FUNCTION HISTOGRAM F0..F3 = ${funcHist.join(',')} =====\n\n` +
+          `===== FUNCTION HISTOGRAM F0..F3 = ${funcHist.join(',')} =====\n` +
+          `===== initInbound=${initInbound} statusReads=${statusReads} statusReadsWithPkt=${statusReadsWithPkt} finalInbound=${chip.debugInboundCount()} =====\n\n` +
           '===== F2/IOCTL TRANSFERS (total seen, non-ring) =====\n' +
           `count=${f2Log.length}\n` + f2Log.join('\n') + '\n\n' +
           '===== TRACE TAIL (post-firmware) =====\n' + trace.slice(-120).join('\n') + '\n';
