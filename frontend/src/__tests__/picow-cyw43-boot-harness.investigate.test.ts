@@ -233,6 +233,16 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
             pushCount++;
             rawWords.push(v >>> 0);
             if (rawWords.length > 600) rawWords.splice(0, rawWords.length - 400); // ring
+            // Firmware/backplane bulk-write data: discard most of it (keep up to
+            // 4 words so the PIO drains a little then raises TXSTALL, which is all
+            // the driver's write path waits for). This fast-paths the ~224 KB
+            // download instead of bit-banging every word through the PIO. F2
+            // (IOCTL) writes and all count/command words go through feedWord and
+            // are retained in full.
+            if (sniffer.inDiscardableWriteData()) {
+              if (q.length - head < 4) q.push(v >>> 0);
+              return;
+            }
             feedWord(v, sm);
             q.push(v >>> 0);
           };
@@ -352,9 +362,13 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
       // blocks in active(True) with no bus activity, so a PC histogram localizes
       // the stuck loop — DMA wait, TXSTALL wait, or a delay).
       const pcHist = new Map<number, number>();
+      const ipsrHist = new Map<number, number>();
       const pcSampler = setInterval(() => {
-        const pc = ((sim.rp2040 as any).core?.PC ?? 0) >>> 0;
+        const core = (sim.rp2040 as any).core;
+        const pc = (core?.PC ?? 0) >>> 0;
         pcHist.set(pc, (pcHist.get(pc) ?? 0) + 1);
+        const ipsr = (core?.IPSR ?? 0) & 0x3f; // 0=thread, else exception number
+        ipsrHist.set(ipsr, (ipsrHist.get(ipsr) ?? 0) + 1);
       }, 20);
       const deadline = setTimeout(finish, 70_000);
       function finish() {
@@ -396,7 +410,10 @@ describe.skipIf(!process.env.CYW43_HARNESS)('Pico W cyw43 boot harness (investig
           `===== CPU FAULTS faultCount=${faultCount} =====\n` + faultLog.join('\n') + '\n' +
           '===== HOT PCs (busy-wait localization) =====\n' +
           [...pcHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)
-            .map(([pc, n]) => `  ${String(n).padStart(6)}  PC=0x${pc.toString(16)}`).join('\n') + '\n\n' +
+            .map(([pc, n]) => `  ${String(n).padStart(6)}  PC=0x${pc.toString(16)}`).join('\n') + '\n' +
+          '===== IPSR (0=thread, else exception#) =====\n' +
+          [...ipsrHist.entries()].sort((a, b) => b[1] - a[1])
+            .map(([ipsr, n]) => `  ${String(n).padStart(6)}  IPSR=${ipsr}`).join('\n') + '\n\n' +
           '===== PIO/SM STATE AT DEADLINE (deadlock) =====\n' + pioState + '\n' +
           '===== F2/IOCTL TRANSFERS (total seen, non-ring) =====\n' +
           `count=${f2Log.length}\n` + f2Log.join('\n') + '\n\n' +

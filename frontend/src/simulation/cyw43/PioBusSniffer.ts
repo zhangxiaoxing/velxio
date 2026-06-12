@@ -146,6 +146,20 @@ export class PioBusSniffer {
   /** Debug hook (tests): fired with each count word's raw value + decode. */
   onCount: ((kind: 'out' | 'in', raw: number, bytes: number) => void) | null = null;
 
+  /**
+   * True while the in-flight transfer is a large non-F2 write — i.e. a firmware
+   * download block (or any backplane bulk write the chip discards). The host
+   * pushes ~224 KB of these; their data words carry no information the emulator
+   * needs (firmware lands in chip SRAM we don't model), so a non-dropping FIFO
+   * forces the PIO to bit-bang every one and the emulation crawls. The harness
+   * uses this to drop those data words while keeping F2/SDPCM writes (IOCTLs)
+   * and every command/count word intact. 36 bytes = count(0) + cmd(4) + a few
+   * config words; firmware blocks are 64-byte payloads, well above it.
+   */
+  inDiscardableWriteData(): boolean {
+    return this.state === 'writeData' && this.cmd?.function !== 2 && this.outBytes > 36;
+  }
+
   *feedWord(rawWord: number): Generator<SnifferEvent> {
     const raw = rawWord >>> 0;
 
