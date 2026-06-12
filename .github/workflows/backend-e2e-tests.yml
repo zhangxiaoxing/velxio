@@ -7,7 +7,33 @@ on:
     branches: [master, main]
 
 jobs:
+  # Gate: repository secrets (the build license key) are NOT exposed to
+  # workflow runs triggered by pull_request from a FORK. Without the key the
+  # gated download in the e2e job can only `exit 1`, turning every external
+  # contributor's PR red for a reason unrelated to their change. This tiny job
+  # checks whether the key is present; if not, the real e2e job is SKIPPED
+  # (neutral) instead of failed. Maintainer pushes and same-repo branches —
+  # which do receive the secret — still run the full suite.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run_e2e: ${{ steps.check.outputs.run_e2e }}
+    steps:
+      - name: Check for build license key (absent on fork PRs)
+        id: check
+        env:
+          VELXIO_LICENSE_KEY: ${{ secrets.VELXIO_BUILD_LICENSE_KEY }}
+        run: |
+          if [ -n "$VELXIO_LICENSE_KEY" ]; then
+            echo "run_e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_e2e=false" >> "$GITHUB_OUTPUT"
+            echo "::notice ::VELXIO_BUILD_LICENSE_KEY unavailable (fork PR or unset) — skipping the gated QEMU e2e suite instead of failing it. A maintainer push or same-repo branch runs it in full."
+          fi
+
   e2e:
+    needs: gate
+    if: needs.gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
