@@ -325,6 +325,14 @@ export class Cyw43Emulator {
   /** True once the driver has switched the bus to 32-bit big-endian. */
   isBigEndian(): boolean { return this.bigEndian; }
 
+  /** Current WL_HOST_WAKE level (true=high). Lets the host re-sync GPIO24
+   *  after the RP2040 (and its GPIO state) is recreated by a firmware reload. */
+  hostWakeLevel(): boolean { return this.hostWakeAsserted; }
+
+  /** Enable/replace (or disable with null) the self-contained DHCP/ARP net.
+   *  Disable it when an external packet bridge owns the network. */
+  setVirtualNet(cfg: VirtualNetConfig | null): void { this.virtualNet = cfg; }
+
   /** Debug: queued chip→host frame count (for harness instrumentation). */
   debugInboundCount(): number { return this.inboundEvents.length; }
 

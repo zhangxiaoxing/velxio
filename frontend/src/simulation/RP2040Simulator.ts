@@ -416,9 +416,19 @@ export class RP2040Simulator {
     emu.onPacketOut((ev: PacketOutEvent) => {
       this.cyw43Bridge?.sendPacket(ev.ether);
     });
+    // Drive WL_HOST_WAKE (GPIO24, active-high). The driver gates poll_device on
+    // this pin until it has received its first packet, so without it the first
+    // IOCTL response is never read and wifi_on stalls.
+    emu.onHostWake((active: boolean) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      try { (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active); } catch { /* noop */ }
+    });
 
     if (bridge) {
       bridge.onPacketIn = (p) => emu.injectPacket(p.ether);
+      // A real backend bridge owns the network, so disable the built-in
+      // DHCP/ARP responder to avoid answering on its behalf.
+      emu.setVirtualNet(null);
     }
 
     this.installCyw43PioHooks();
@@ -453,13 +463,55 @@ export class RP2040Simulator {
         const tx = sm.txFIFO;
         const rx = sm.rxFIFO;
         if (!tx || !rx) continue;
+        const sniffer = this.cyw43Sniffer;
+        // Make the TX FIFO NON-DROPPING (head-pointer queue). rp2040js's 4-deep
+        // FIFO silently drops words once full, which truncates the 260-word F2
+        // IOCTL writes (clm_load, the connect ioctls) so the chip never sees a
+        // complete frame. Real hardware paces the DMA with DREQ and never drops.
+        // To keep the ~224 KB firmware download cheap we still discard the bulk
+        // of each firmware/backplane write (inDiscardableWriteData): the PIO
+        // drains the few kept words, raises TXSTALL, and the driver moves on.
+        const q: number[] = [];
+        let head = 0;
+        const origFull = Object.getOwnPropertyDescriptor(tx, 'full');
+        const origEmpty = Object.getOwnPropertyDescriptor(tx, 'empty');
+        const origItem = Object.getOwnPropertyDescriptor(tx, 'itemCount');
         const origPush: (v: number) => void = tx.push.bind(tx);
+        const origPull: () => number = tx.pull.bind(tx);
+        const origPeek = tx.peek?.bind(tx);
+        const origReset = tx.reset?.bind(tx);
+        Object.defineProperty(tx, 'full', { get: () => false, configurable: true });
+        Object.defineProperty(tx, 'empty', { get: () => head >= q.length, configurable: true });
+        Object.defineProperty(tx, 'itemCount', { get: () => q.length - head, configurable: true });
+        tx.peek = () => (head < q.length ? q[head] : 0);
+        tx.reset = () => { q.length = 0; head = 0; };
         tx.push = (value: number) => {
+          if (sniffer.inDiscardableWriteData()) {
+            if (q.length - head < 4) q.push(value >>> 0); // keep a few so the PIO TXSTALLs
+            return;
+          }
           // Feed the gSPI sniffer; commands that produce a response queue it
           // for on-demand delivery (see the rxFIFO.pull hook below).
           this.feedCyw43Word(value);
-          return origPush(value);
+          q.push(value >>> 0);
         };
+        tx.pull = () => {
+          if (head >= q.length) return 0;
+          const v = q[head++];
+          if (head > 8192 && head * 2 > q.length) { q.splice(0, head); head = 0; } // compact
+          return v;
+        };
+        this.cyw43HookedFifos.push({
+          restore: () => {
+            if (origFull) Object.defineProperty(tx, 'full', origFull); else delete tx.full;
+            if (origEmpty) Object.defineProperty(tx, 'empty', origEmpty); else delete tx.empty;
+            if (origItem) Object.defineProperty(tx, 'itemCount', origItem); else delete tx.itemCount;
+            tx.push = origPush;
+            tx.pull = origPull;
+            if (origPeek) tx.peek = origPeek;
+            if (origReset) tx.reset = origReset;
+          },
+        });
         // Reset the gSPI framing at each transfer boundary. cyw43_spi_transfer
         // does pio_sm_restart before pushing the count words, so this keeps the
         // sniffer deterministic even across the firmware-stream fast-path.
@@ -479,19 +531,25 @@ export class RP2040Simulator {
         // the data arrived late or was lost; serving on pull keeps it in lock
         // step with the driver.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const origPull: () => number = (rx as any).pull.bind(rx);
+        const origRxPull: () => number = (rx as any).pull.bind(rx);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (rx as any).pull = () =>
-          this.cyw43RxQueue.length > 0 ? (this.cyw43RxQueue.shift() as number) : origPull();
+          this.cyw43RxQueue.length > 0 ? (this.cyw43RxQueue.shift() as number) : origRxPull();
         this.cyw43HookedFifos.push({
           restore: () => {
-            tx.push = origPush;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (rx as any).pull = origPull;
+            (rx as any).pull = origRxPull;
           },
         });
       }
     }
+    // Re-sync WL_HOST_WAKE: loadMicroPython swaps in a fresh RP2040 (GPIO reset
+    // to low) while the chip's frame queue — and thus its host-wake level —
+    // persists. onHostWake only fires on changes, so push the current level now.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.rp2040 as any)?.gpio?.[24]?.setInputValue(this.cyw43.hostWakeLevel());
+    } catch { /* noop */ }
   }
 
   private cyw43RxQueue: number[] = [];
