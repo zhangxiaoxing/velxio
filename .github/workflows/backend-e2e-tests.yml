@@ -50,14 +50,22 @@ jobs:
           mkdir -p $QEMU_DIR
           cd $QEMU_DIR
 
+          # Retry on transient blips: the binaries are served from velxio.dev,
+          # which has brief windows of unavailability during a deploy (the app
+          # container is recreated -> a few seconds of 502). Without retries a
+          # single blip mid-download fails the whole e2e job. --retry-all-errors
+          # covers 5xx (the deploy case), --retry-connrefused the cold-restart
+          # case; 5 x 10s buys ~50s, enough to ride out a container recreate.
+          RETRY="--retry 5 --retry-delay 10 --retry-all-errors --retry-connrefused --connect-timeout 15"
+
           echo "Downloading QEMU shared libraries..."
-          curl -fSL -o libqemu-xtensa.so  "$VELXIO_BINARY_BASE_URL/libqemu-xtensa-amd64?key=$VELXIO_LICENSE_KEY"
-          curl -fSL -o libqemu-riscv32.so "$VELXIO_BINARY_BASE_URL/libqemu-riscv32-amd64?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o libqemu-xtensa.so  "$VELXIO_BINARY_BASE_URL/libqemu-xtensa-amd64?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o libqemu-riscv32.so "$VELXIO_BINARY_BASE_URL/libqemu-riscv32-amd64?key=$VELXIO_LICENSE_KEY"
 
           echo "Downloading ROM files..."
-          curl -fSL -o esp32-v3-rom.bin     "$VELXIO_BINARY_BASE_URL/esp32-v3-rom?key=$VELXIO_LICENSE_KEY"
-          curl -fSL -o esp32-v3-rom-app.bin "$VELXIO_BINARY_BASE_URL/esp32-v3-rom-app?key=$VELXIO_LICENSE_KEY"
-          curl -fSL -o esp32c3-rom.bin      "$VELXIO_BINARY_BASE_URL/esp32c3-rom?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o esp32-v3-rom.bin     "$VELXIO_BINARY_BASE_URL/esp32-v3-rom?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o esp32-v3-rom-app.bin "$VELXIO_BINARY_BASE_URL/esp32-v3-rom-app?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o esp32c3-rom.bin      "$VELXIO_BINARY_BASE_URL/esp32c3-rom?key=$VELXIO_LICENSE_KEY"
 
           chmod +x libqemu-xtensa.so libqemu-riscv32.so
           ls -lh .
