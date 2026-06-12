@@ -587,7 +587,7 @@ while True:
     description: "Blynk Based IoT Relay Control (MicroPython) on Raspberry Pi Pico W (MicroPython) \u2014 uses Blynk, Blynk Cloud, Wi-Fi.",
     category: "communication",
     difficulty: "advanced",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "BlynkLib.py", content: `# Copyright (c) 2015-2019 Volodymyr Shymanskyy. See the file LICENSE for copying permission.
@@ -3475,7 +3475,7 @@ while True:
     description: "IoT Relay Control Web Server (Raspberry Pi Pico 2W) on Raspberry Pi Pico W (MicroPython) \u2014 uses Wi-Fi.",
     category: "communication",
     difficulty: "intermediate",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "main.py", content: `import network
@@ -4858,7 +4858,7 @@ class Matrix8x8:
     description: "OTA Update Pico2W on Raspberry Pi Pico W (MicroPython) \u2014 uses OTA, Wi-Fi.",
     category: "communication",
     difficulty: "advanced",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "boot.py", content: `# boot.py - Runs automatically every time Pico starts
@@ -5352,7 +5352,7 @@ while True:
     description: "Pico 2 W Dht11 Http Csv Logger on Raspberry Pi Pico W (MicroPython) \u2014 uses DHT, HTTP server, Wi-Fi.",
     category: "communication",
     difficulty: "intermediate",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "app.py", content: `from flask import Flask, request
@@ -5436,7 +5436,7 @@ while True:
     description: "Pico W Async LED Control (MicroPython) on Raspberry Pi Pico W (MicroPython) \u2014 uses Wi-Fi.",
     category: "communication",
     difficulty: "intermediate",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "main.py", content: `import uasyncio as asyncio
@@ -5557,7 +5557,7 @@ asyncio.run(main())
     description: "Pico W Web Servo Controller on Raspberry Pi Pico W (MicroPython) \u2014 uses OTA, Servo, Wi-Fi.",
     category: "robotics",
     difficulty: "advanced",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "main.py", content: `import network
@@ -6142,7 +6142,7 @@ class SSD1306_SPI(SSD1306):
     description: "Raspberry Pi Pico 2 W ThingsBoard IoT on Raspberry Pi Pico W (MicroPython) \u2014 uses DHT, MQTT, Wi-Fi.",
     category: "communication",
     difficulty: "intermediate",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "main.py", content: `import network
@@ -7827,7 +7827,7 @@ while True:
     description: "WebSocket LED Control using Raspberry Pi Pico W on Raspberry Pi Pico W (MicroPython) \u2014 uses WebSocket, Wi-Fi.",
     category: "communication",
     difficulty: "advanced",
-    boardType: "raspberry-pi-pico",
+    boardType: "pi-pico-w",
     languageMode: 'micropython',
     files: [
       { name: "main.py", content: `import socket
