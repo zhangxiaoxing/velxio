@@ -499,18 +499,20 @@ export class Cyw43Emulator {
     if (channel === SdpcmChannel.CONTROL) {
       this.handleIoctl(payload);
     } else if (channel === SdpcmChannel.DATA) {
-      // Outbound Ethernet frame. Strip the 4-byte BDC header the driver
-      // prepends, then forward to any external bridge.
+      // Outbound Ethernet frame. Strip the 4-byte BDC header the driver prepends.
       const BDC = 4;
       const ether = payload.length >= BDC ? new Uint8Array(payload.subarray(BDC)) : payload;
-      this.firePacketOut(ether);
-      // Self-contained virtual network: answer DHCP / ARP so a freshly-joined
-      // STA gets an IP and the link advances NOIP -> UP (isconnected == True).
-      // Disabled when an external bridge owns the network.
+      // DHCP/ARP are answered LOCALLY by the virtual net so the STA always
+      // associates and gets an IP (10.13.37.42) even with no backend — never
+      // forwarded, to avoid a double response if a bridge is also attached.
+      // Everything else (DNS/TCP/UDP, addressed to the same gateway) goes to the
+      // external bridge for real-internet NAT. With no bridge it's a no-op and
+      // those just fail, exactly like the pre-bridge self-contained net.
       if (this.virtualNet) {
         const reply = virtualNetReply(this.virtualNet, ether);
-        if (reply) this.injectPacket(reply);
+        if (reply) { this.injectPacket(reply); return; }
       }
+      this.firePacketOut(ether);
     }
     // Channel 1 (events) is chip → host only.
   }

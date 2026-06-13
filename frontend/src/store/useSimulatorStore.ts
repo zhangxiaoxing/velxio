@@ -1821,15 +1821,13 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
                 /#include\s*[<"]WiFi\.h[>"]/.test(f.content) ||
                 /WiFi\.begin\(/.test(f.content),
             );
-            // Backend internet bridge (picow_net: DHCP + NAT to the real
-            // internet) is deferred until validated end to end. Leaving the
-            // bridge dormant means the chip emulator's built-in virtual DHCP/ARP
-            // net handles the association locally: WiFi connects + gets a
-            // link-local IP (isconnected True), but outbound traffic (MQTT/HTTP)
-            // has no route yet. Re-enable when the bridge is wired:
-            //   cyw43.wifiEnabled = hasWifi; cyw43.connect();
-            void hasWifi;
-            void cyw43;
+            // Open the backend internet bridge (picow_net: DNS + TCP/UDP NAT to
+            // the real internet) for Wi-Fi sketches. The chip's built-in virtual
+            // net always answers DHCP/ARP locally so Wi-Fi associates even if the
+            // bridge is absent/flaky; only DNS/TCP/UDP ride the bridge. Nothing
+            // is mutually exclusive, so the bridge can never break association.
+            cyw43.wifiEnabled = hasWifi;
+            cyw43.connect();
           }
         }
       }

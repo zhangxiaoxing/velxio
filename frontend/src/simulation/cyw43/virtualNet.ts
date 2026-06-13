@@ -25,12 +25,17 @@ export interface VirtualNetConfig {
   leaseSecs: number;
 }
 
+// Aligned with the backend picow_net stack (consts.py): same subnet, gateway
+// and gateway MAC. That way DHCP/ARP can be answered LOCALLY (so Wi-Fi always
+// associates, even with no backend) while DNS/TCP/UDP — addressed to this same
+// gateway 10.13.37.1 — are forwarded to the backend NAT for real internet. The
+// backend NATs by the chip's source IP, so the addresses must match.
 export const DEFAULT_VNET: VirtualNetConfig = {
-  serverIp: [192, 168, 4, 1],
-  clientIp: [192, 168, 4, 2],
+  serverIp: [10, 13, 37, 1],
+  clientIp: [10, 13, 37, 42],
   netmask: [255, 255, 255, 0],
-  dnsIp: [192, 168, 4, 1],
-  apMac: new Uint8Array([0x02, 0x56, 0x45, 0x4c, 0x58, 0x00]), // locally-administered "VELX"
+  dnsIp: [10, 13, 37, 1],
+  apMac: new Uint8Array([0x02, 0x42, 0xda, 0x42, 0xff, 0xff]), // backend GATEWAY_MAC
   leaseSecs: 86400,
 };
 

@@ -427,11 +427,11 @@ export class RP2040Simulator {
     if (bridge) {
       bridge.onPacketIn = (p) => emu.injectPacket(p.ether);
     }
-    // NOTE: the built-in virtual DHCP/ARP net stays ON. The backend bridge is
-    // deferred (not validated end to end yet) and is left dormant by the store,
-    // so the virtual net is the only network responder — the STA associates and
-    // gets a link-local IP locally (no outbound internet). When the bridge is
-    // wired and connected, switch with emu.setVirtualNet(null) to cede the net.
+    // The built-in virtual net stays ON and answers DHCP/ARP locally so Wi-Fi
+    // always associates (10.13.37.42), with or without a backend. The emulator
+    // forwards only non-DHCP/ARP traffic (DNS/TCP/UDP) to the bridge — addressed
+    // to the same gateway — for real-internet NAT. No mutually-exclusive switch,
+    // so a flaky/absent bridge can never break the Wi-Fi association.
 
     this.installCyw43PioHooks();
     return emu;
