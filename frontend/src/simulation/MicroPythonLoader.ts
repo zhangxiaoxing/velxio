@@ -157,7 +157,13 @@ export async function loadUserFiles(
   for (const file of files) {
     const fileName = file.name;
     const content = file.content;
-    writeFile(lfsInstance, fileName, content, content.length);
+    // cwrap marshals `content` to the WASM heap as UTF-8, so the byte count we
+    // pass must be the UTF-8 length, NOT content.length (UTF-16 code units).
+    // A multi-byte char (e.g. an em-dash in a comment) makes UTF-8 longer, and
+    // passing the shorter content.length truncates the tail of the file —
+    // corrupting the final statement into a SyntaxError at EOF.
+    const byteLength = new TextEncoder().encode(content).length;
+    writeFile(lfsInstance, fileName, content, byteLength);
   }
 
   // Unmount and free
