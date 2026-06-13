@@ -42,11 +42,21 @@ export interface SdpcmFrame {
 
 /** Build an SDPCM frame for a given channel. */
 export function encodeSdpcm(opts: SdpcmFrame): Uint8Array {
-  const total = SDPCM_HEADER_LEN + opts.payload.length;
+  const size = SDPCM_HEADER_LEN + opts.payload.length;
+  // gSPI / F2 is word-oriented: the real CYW43439 always drives frames padded
+  // up to a 4-byte boundary, and the host reads that word-aligned length. The
+  // emulator's F2 read path byte-swaps every 32-bit word (encodeFrameWords);
+  // if the buffer length is NOT a multiple of 4 the final partial word gets
+  // mangled by the host's symmetric swap, corrupting the last 1-3 bytes of the
+  // frame. That goes unnoticed for DHCP/ARP (UDP checksum 0, trailing pad) but
+  // silently drops DNS/TCP replies (real checksum -> lwIP discards). Pad the
+  // backing buffer to a word boundary; the `size` field stays the true length
+  // so the driver still parses exactly the real frame and ignores the pad.
+  const total = (size + 3) & ~3;
   const buf = new Uint8Array(total);
   const dv = new DataView(buf.buffer);
-  dv.setUint16(0, total, true);
-  dv.setUint16(2, ~total & 0xffff, true);
+  dv.setUint16(0, size, true);
+  dv.setUint16(2, ~size & 0xffff, true);
   buf[4] = opts.sequence & 0xff;
   buf[5] = opts.channel & 0xff;
   buf[6] = 0; // next_length
