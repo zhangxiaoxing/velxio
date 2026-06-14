@@ -74,6 +74,9 @@ class PicowNetManager:
     def has_instance(self, client_id: str) -> bool:
         return client_id in self._instances
 
+    def get_instance(self, client_id: str) -> PicowNetBridge | None:
+        return self._instances.get(client_id)
+
     # ── Outbound traffic — chip → host ─────────────────────────────
 
     async def deliver_packet_out(self, client_id: str, ether_b64: str) -> None:

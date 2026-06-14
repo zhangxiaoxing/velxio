@@ -261,7 +261,10 @@ export const SerialMonitor: React.FC = () => {
               // Strip them before any further processing — color isn't
               // worth a full parser here.
               const text = activeBoard.serialOutput.replace(/\x1b\[[0-9;]*m/g, '');
-              const ipRegex = /http:\/\/192\.168\.4\.(\d+)(\/[^\s]*)?/g;
+              // ESP32 (QEMU slirp) hands out 192.168.4.x; the Pico W virtual
+              // net hands out 10.13.37.x. Both reach their emulated server
+              // through the same /api/gateway proxy, so linkify either subnet.
+              const ipRegex = /http:\/\/(?:192\.168\.4|10\.13\.37)\.(\d+)(\/[^\s]*)?/g;
               const matches = [...text.matchAll(ipRegex)];
 
               if (matches.length > 0) {

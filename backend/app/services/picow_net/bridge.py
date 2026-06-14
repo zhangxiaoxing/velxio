@@ -18,9 +18,12 @@ from typing import Awaitable, Callable
 
 from .arp import ArpResponder
 from .consts import (
+    ARP_REQUEST,
+    BROADCAST_MAC,
     ETHERTYPE_ARP,
     ETHERTYPE_IPV4,
     GATEWAY_IP,
+    GATEWAY_MAC,
     IPPROTO_ICMP,
     IPPROTO_TCP,
     IPPROTO_UDP,
@@ -35,7 +38,8 @@ from .dhcp import (
 )
 from .dns import DnsResolver, is_dns_traffic, make_dns_frame
 from .icmp import IcmpResponder
-from .protocols import Ethernet, IPv4, TCP, UDP
+from .protocols import Arp, Ethernet, IPv4, TCP, UDP, make_frame_arp
+from .tcp_inbound import TcpInbound
 from .tcp_nat import TcpNat
 from .udp_nat import UdpNat
 
@@ -59,6 +63,7 @@ class PicowNetBridge:
         self._dns = DnsResolver()
         self._icmp = IcmpResponder()
         self._tcp = TcpNat(self._inject)
+        self._tcp_in = TcpInbound(self._inject, lambda: self._chip_mac)
         self._udp = UdpNat(self._inject)
 
     # ── lifecycle ──────────────────────────────────────────────────
@@ -74,6 +79,7 @@ class PicowNetBridge:
         self.running = False
         await asyncio.gather(
             self._tcp.shutdown(),
+            self._tcp_in.shutdown(),
             self._udp.shutdown(),
             return_exceptions=True,
         )
@@ -126,6 +132,12 @@ class PicowNetBridge:
                 tcp = TCP.parse(ip.payload)
             except ValueError:
                 return
+            # A reply to a connection WE opened into the chip's server (the
+            # IoT gateway) takes priority over the chip-initiated NAT, which
+            # would otherwise RST it as a stray segment.
+            if self._tcp_in.matches(ip, tcp):
+                await self._tcp_in.handle_chip_segment(ip, tcp)
+                return
             await self._tcp.handle_chip_segment(self._chip_mac, ip, tcp)
             return
 
@@ -151,6 +163,37 @@ class PicowNetBridge:
             return
         # Anything else — generic UDP NAT.
         await self._udp.handle_chip_datagram(chip_mac, ip, udp)
+
+    # ── host → chip: inbound HTTP (IoT gateway) ────────────────────
+
+    async def ensure_chip_mac(self) -> bytes:
+        """Prime the chip's ARP cache for the gateway before we open a
+        connection into it, so its SYN+ACK doesn't stall on a lookup.
+
+        The chip's on-wire MAC is deterministically DEFAULT_STA_MAC
+        (frontend virtual-ap.ts), which equals our STA_MAC, so the default
+        ``_chip_mac`` is already the right destination — we don't need to
+        learn it. If the chip ever sent an outbound frame, the learned MAC
+        is used instead. We still emit one gratuitous ARP for the STA so the
+        chip resolves the gateway promptly, then return without blocking."""
+        req = Arp(
+            opcode=ARP_REQUEST,
+            sha=GATEWAY_MAC,
+            spa=ip_to_bytes(GATEWAY_IP),
+            tha=b'\x00' * 6,
+            tpa=ip_to_bytes(STA_IP),
+        )
+        await self._inject(make_frame_arp(BROADCAST_MAC, GATEWAY_MAC, req))
+        await asyncio.sleep(0.05)
+        return self._chip_mac
+
+    async def http_into_chip(self, raw_http: bytes, timeout: float = 12.0) -> bytes | None:
+        """Open a TCP connection to the chip's :80 server, send a raw HTTP
+        request, and return the raw HTTP response bytes (or None)."""
+        if not self.running or not self.wifi_enabled:
+            return None
+        await self.ensure_chip_mac()
+        return await self._tcp_in.request(raw_http, timeout=timeout)
 
     # ── host → chip ────────────────────────────────────────────────
 

@@ -66,7 +66,9 @@ async def wifi_connect():
     print("Connecting WiFi...")
     while not wlan.isconnected():
         await asyncio.sleep(0.5)
-    print("IP:", wlan.ifconfig()[0])
+    ip = wlan.ifconfig()[0]
+    print("IP:", ip)
+    print("Open browser: http://%s/" % ip)
 
 HTML = """<!DOCTYPE html>
 <html><body><h2>Pico W Async LED</h2>
@@ -190,7 +192,7 @@ s.listen(5)
 
 current_pos = 90
 write_servo(current_pos)
-print("Web server started on port 80")
+print("Web server started. Open browser: http://%s/" % sta.ifconfig()[0])
 
 while True:
     conn, addr = s.accept()

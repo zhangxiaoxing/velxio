@@ -18,6 +18,8 @@ from fastapi import APIRouter, Request, Response
 
 from app.core.hooks import iot_gateway_gate
 from app.services.esp32_lib_manager import esp_lib_manager
+from app.services.picow_net.consts import STA_IP
+from app.services.picow_net_bridge import picow_net_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -66,14 +68,26 @@ async def gateway_proxy(client_id: str, path: str, request: Request) -> Response
             media_type='application/json',
         )
 
+    # ── ESP32: the server runs in QEMU, reachable via slirp hostfwd. ──
     inst = esp_lib_manager.get_instance(client_id)
-    if not inst or not inst.wifi_enabled or inst.wifi_hostfwd_port == 0:
-        return Response(
-            content='{"error":"No WiFi-enabled ESP32 instance found for this client"}',
-            status_code=404,
-            media_type='application/json',
-        )
+    if inst and inst.wifi_enabled and inst.wifi_hostfwd_port != 0:
+        return await _proxy_esp32(inst, path, request)
 
+    # ── Pico W: the server runs in the browser-side lwIP, reachable only
+    #    by injecting TCP frames over the WebSocket bridge into the chip. ──
+    picow = picow_net_manager.get_instance(client_id)
+    if picow is not None and picow.wifi_enabled:
+        return await _proxy_picow(picow, path, request)
+
+    return Response(
+        content='{"error":"No WiFi-enabled board found for this client. Make sure your sketch connected to WiFi and started a server on port 80."}',
+        status_code=404,
+        media_type='application/json',
+    )
+
+
+async def _proxy_esp32(inst, path: str, request: Request) -> Response:
+    """Reverse-proxy to an ESP32 web server via QEMU slirp hostfwd."""
     target_url = f'http://127.0.0.1:{inst.wifi_hostfwd_port}/{path}'
     body = await request.body()
 
@@ -117,3 +131,88 @@ async def gateway_proxy(client_id: str, path: str, request: Request) -> Response
         headers=resp_headers,
         media_type=resp.headers.get('content-type'),
     )
+
+
+# Hop-by-hop / per-connection headers we never forward verbatim.
+_HOP_BY_HOP = {'host', 'transfer-encoding', 'connection', 'content-encoding',
+               'keep-alive', 'proxy-connection', 'upgrade'}
+
+
+async def _proxy_picow(bridge, path: str, request: Request) -> Response:
+    """Reverse-proxy to a Pico W web server living in the browser-side lwIP.
+
+    There is no host-side socket to connect to — the server only exists
+    inside the simulated chip — so we hand-build a raw HTTP/1.1 request and
+    have the picow_net stack open a TCP connection INTO the chip over the
+    WebSocket bridge, then parse the raw response back out."""
+    body = await request.body()
+    query = request.url.query
+    target = '/' + path + (('?' + query) if query else '')
+
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+    }
+    headers['Host'] = STA_IP
+    headers['Connection'] = 'close'   # make the chip's server FIN when done
+    if body and 'content-length' not in {k.lower() for k in headers}:
+        headers['Content-Length'] = str(len(body))
+
+    req_line = f'{request.method} {target} HTTP/1.1\r\n'
+    header_block = ''.join(f'{k}: {v}\r\n' for k, v in headers.items())
+    raw_request = (req_line + header_block + '\r\n').encode('latin-1') + body
+
+    try:
+        raw_response = await bridge.http_into_chip(raw_request, timeout=12.0)
+    except Exception:
+        logger.exception('[picow-gateway] request into chip failed')
+        raw_response = None
+
+    if not raw_response:
+        return Response(
+            content='{"error":"Pico W HTTP server did not respond. Make sure your sketch connected to WiFi and is listening on port 80."}',
+            status_code=502,
+            media_type='application/json',
+        )
+
+    status, resp_headers, resp_body = _parse_http_response(raw_response)
+    for h in ('transfer-encoding', 'connection', 'content-encoding',
+              'content-length', 'keep-alive'):
+        resp_headers.pop(h, None)
+    media_type = resp_headers.pop('content-type', None) or 'text/html'
+
+    return Response(
+        content=resp_body,
+        status_code=status,
+        headers=resp_headers,
+        media_type=media_type,
+    )
+
+
+def _parse_http_response(raw: bytes) -> tuple[int, dict, bytes]:
+    """Split a raw HTTP/1.x response into (status, headers, body). Headers
+    are returned with lower-cased keys (so callers can pop reliably)."""
+    sep = raw.find(b'\r\n\r\n')
+    sep_len = 4
+    if sep < 0:
+        sep = raw.find(b'\n\n')
+        sep_len = 2
+    if sep < 0:
+        # No header terminator — treat the whole thing as a body.
+        return 200, {}, raw
+
+    head = raw[:sep].decode('latin-1', 'replace')
+    resp_body = raw[sep + sep_len:]
+    lines = head.replace('\r\n', '\n').split('\n')
+
+    status = 200
+    parts = lines[0].split(' ', 2)
+    if len(parts) >= 2 and parts[1].isdigit():
+        status = int(parts[1])
+
+    headers: dict = {}
+    for line in lines[1:]:
+        if ':' in line:
+            k, v = line.split(':', 1)
+            headers[k.strip().lower()] = v.strip()
+    return status, headers, resp_body
