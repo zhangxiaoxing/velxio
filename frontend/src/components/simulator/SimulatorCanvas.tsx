@@ -2166,12 +2166,23 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               <CameraToggle boardId={activeBoard.id} />
             )}
 
-            {/* WiFi status indicator (ESP32 boards only) */}
+            {/* WiFi status indicator + IoT-gateway launcher (ESP32 + Pico W) */}
             {activeBoard &&
-              isEsp32Kind(activeBoard.boardKind) &&
+              (isEsp32Kind(activeBoard.boardKind) ||
+                activeBoard.boardKind === 'pi-pico-w') &&
               activeBoard.wifiStatus &&
               (() => {
-                const status = activeBoard.wifiStatus.status;
+                // The Pico W virtual net assigns its IP deterministically when
+                // the sketch connects; the bridge reports 'started' carrying the
+                // IP. Treat that as got_ip so the badge matches the ESP32 (green,
+                // clickable → the same /api/gateway proxy).
+                const rawStatus = activeBoard.wifiStatus.status;
+                const status =
+                  activeBoard.boardKind === 'pi-pico-w' &&
+                  rawStatus === 'started' &&
+                  activeBoard.wifiStatus.ip
+                    ? 'got_ip'
+                    : rawStatus;
                 const hasIp = status === 'got_ip';
                 const sessionId = getTabSessionId();
                 const clientId = `${sessionId}::${activeBoard.id}`;
