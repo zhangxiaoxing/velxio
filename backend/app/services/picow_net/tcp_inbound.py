@@ -128,6 +128,10 @@ class TcpInbound:
             return
 
         if conn.state != _State.ESTABLISHED:
+            # TIME_WAIT (or pre-handshake): re-ACK late retransmits so the chip
+            # closes cleanly. Never let it reach the outbound NAT (RST).
+            if tcp.payload or (tcp.flags & (TCP_FIN | TCP_SYN)):
+                await self._send(conn, TCP_ACK)
             return
 
         # In-order data only; re-ACK and drop anything out of order so the
@@ -199,7 +203,14 @@ class TcpInbound:
                         break   # got a full header block and went idle — good enough
             return bytes(conn.rx) if conn.rx else None
         finally:
-            self._conns.pop(our_port, None)
+            # TIME_WAIT: keep the connection around briefly so late chip
+            # segments (a retransmitted FIN, a trailing ACK) still match this
+            # connection and get absorbed/re-ACKed here, instead of falling
+            # through to the chip-initiated NAT which would RST them — a RST
+            # crashes blocking-socket sketches with ECONNRESET.
+            conn.state = _State.CLOSED
+            loop = asyncio.get_event_loop()
+            loop.call_later(5.0, self._conns.pop, our_port, None)
 
     # ── frame emission ─────────────────────────────────────────────────
 

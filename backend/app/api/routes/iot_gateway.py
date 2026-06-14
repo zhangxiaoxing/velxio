@@ -133,11 +133,6 @@ async def _proxy_esp32(inst, path: str, request: Request) -> Response:
     )
 
 
-# Hop-by-hop / per-connection headers we never forward verbatim.
-_HOP_BY_HOP = {'host', 'transfer-encoding', 'connection', 'content-encoding',
-               'keep-alive', 'proxy-connection', 'upgrade'}
-
-
 async def _proxy_picow(bridge, path: str, request: Request) -> Response:
     """Reverse-proxy to a Pico W web server living in the browser-side lwIP.
 
@@ -149,13 +144,17 @@ async def _proxy_picow(bridge, path: str, request: Request) -> Response:
     query = request.url.query
     target = '/' + path + (('?' + query) if query else '')
 
-    headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in _HOP_BY_HOP
-    }
-    headers['Host'] = STA_IP
-    headers['Connection'] = 'close'   # make the chip's server FIN when done
-    if body and 'content-length' not in {k.lower() for k in headers}:
+    # Forward a MINIMAL request. The chip's servers are tiny — they typically
+    # read one small recv() (e.g. recv(1024)) and don't parse beyond the
+    # request line + Host. A browser sends kilobytes of headers (cookies,
+    # User-Agent, sec-*, ...); forwarding them verbatim overruns that recv,
+    # and the chip's lwIP then RSTs the connection when it closes with unread
+    # data — crashing blocking-socket sketches with ECONNRESET. Keep it lean.
+    headers = {'Host': STA_IP, 'Connection': 'close'}
+    ctype = request.headers.get('content-type')
+    if ctype:
+        headers['Content-Type'] = ctype
+    if body:
         headers['Content-Length'] = str(len(body))
 
     req_line = f'{request.method} {target} HTTP/1.1\r\n'
