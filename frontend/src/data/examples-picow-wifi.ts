@@ -73,13 +73,21 @@ async def wifi_connect():
 led_on = False
 
 def page():
-    # The board's onboard LED isn't drawn on the canvas, so show the state
-    # here; the buttons reload the page so you can see it flip.
-    state = "ON" if led_on else "OFF"
-    return ("<!DOCTYPE html><html><body><h2>Pico W LED: %s</h2>"
-            "<button onclick=\\"fetch('on').then(()=>location.reload())\\">ON</button> "
-            "<button onclick=\\"fetch('off').then(()=>location.reload())\\">OFF</button>"
-            "</body></html>") % state
+    # The board's onboard LED isn't drawn on the canvas, so show a big
+    # state indicator here; the buttons reload so you can see it flip.
+    color = "#22c55e" if led_on else "#666"
+    label = "LED ON" if led_on else "LED OFF"
+    return ("<!DOCTYPE html><html><head>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'></head>"
+            "<body style='font-family:sans-serif;text-align:center;padding:24px;background:#fafafa'>"
+            "<h2>Pico W Onboard LED</h2>"
+            "<div style='margin:18px auto;width:170px;padding:26px 0;border-radius:14px;"
+            "background:%s;color:#fff;font-size:24px;font-weight:bold'>%s</div>"
+            "<button style='font-size:18px;padding:12px 28px;margin:6px' "
+            "onclick=\\"fetch('on').then(()=>location.reload())\\">ON</button>"
+            "<button style='font-size:18px;padding:12px 28px;margin:6px' "
+            "onclick=\\"fetch('off').then(()=>location.reload())\\">OFF</button>"
+            "</body></html>") % (color, label)
 
 async def handle_client(reader, writer):
     global led_on
@@ -143,11 +151,19 @@ s.listen(1)
 print("Open browser: http://%s/" % ip)
 
 def page():
-    state = "ON" if relay_state == 0 else "OFF"
-    return ("<html><body><h2>Pico W Relay: %s</h2>"
-            "<button onclick=\\"fetch('on').then(()=>location.reload())\\">ON</button> "
-            "<button onclick=\\"fetch('off').then(()=>location.reload())\\">OFF</button>"
-            "</body></html>") % state
+    on = (relay_state == 0)
+    color = "#22c55e" if on else "#666"
+    label = "RELAY ON" if on else "RELAY OFF"
+    return ("<html><head><meta name=viewport content='width=device-width,initial-scale=1'></head>"
+            "<body style='font-family:sans-serif;text-align:center;padding:24px;background:#fafafa'>"
+            "<h2>Pico W Relay (GP2)</h2>"
+            "<div style='margin:18px auto;width:170px;padding:26px 0;border-radius:14px;"
+            "background:%s;color:#fff;font-size:24px;font-weight:bold'>%s</div>"
+            "<button style='font-size:18px;padding:12px 28px;margin:6px' "
+            "onclick=\\"fetch('on').then(()=>location.reload())\\">ON</button>"
+            "<button style='font-size:18px;padding:12px 28px;margin:6px' "
+            "onclick=\\"fetch('off').then(()=>location.reload())\\">OFF</button>"
+            "</body></html>") % (color, label)
 
 # Wrap each client in try/except: a browser that drops the connection
 # mid-response would otherwise raise ECONNRESET and kill the server loop.
