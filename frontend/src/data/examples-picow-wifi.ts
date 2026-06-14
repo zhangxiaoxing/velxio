@@ -72,8 +72,8 @@ async def wifi_connect():
 
 HTML = """<!DOCTYPE html>
 <html><body><h2>Pico W Async LED</h2>
-<button onclick="fetch('/on')">ON</button>
-<button onclick="fetch('/off')">OFF</button>
+<button onclick="fetch('on')">ON</button>
+<button onclick="fetch('off')">OFF</button>
 </body></html>"""
 
 async def handle_client(reader, writer):
@@ -137,19 +137,32 @@ s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind((ip, 80))
 s.listen(1)
 
-print("Open browser: http://" + ip)
+print("Open browser: http://%s/" % ip)
 
+def page():
+    state = "ON" if relay_state == 0 else "OFF"
+    return ("<html><body><h2>Pico W Relay: %s</h2>"
+            "<button onclick=\\"fetch('on').then(()=>location.reload())\\">ON</button> "
+            "<button onclick=\\"fetch('off').then(()=>location.reload())\\">OFF</button>"
+            "</body></html>") % state
+
+# Wrap each client in try/except: a browser that drops the connection
+# mid-response would otherwise raise ECONNRESET and kill the server loop.
 while True:
-    conn, addr = s.accept()
-    request = str(conn.recv(1024))
-    if "/on" in request:
-        relay_state = 0; relay.value(relay_state)
-    elif "/off" in request:
-        relay_state = 1; relay.value(relay_state)
-    conn.send("HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n")
-    conn.sendall("<html><body>Relay: %s</body></html>" %
-                 ("ON" if relay_state == 0 else "OFF"))
-    conn.close()
+    try:
+        conn, addr = s.accept()
+        request = str(conn.recv(1024))
+        if "/on" in request:
+            relay_state = 0; relay.value(relay_state)
+        elif "/off" in request:
+            relay_state = 1; relay.value(relay_state)
+        conn.send("HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n" + page())
+        conn.close()
+    except OSError:
+        try:
+            conn.close()
+        except Exception:
+            pass
 `);
 
 const SERVO_WEB_PY = withVelxioGuest(`# Pico W Web Servo Controller — MicroPython
@@ -183,7 +196,7 @@ def write_servo(angle):
 def webpage(pos):
     return ("<html><body><h1>Servo {p}&deg;</h1>"
             "<input type=range min=0 max=180 value={p} "
-            "oninput=\\"fetch('/?value='+this.value)\\"></body></html>").format(p=pos)
+            "oninput=\\"fetch('?value='+this.value)\\"></body></html>").format(p=pos)
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -43,13 +43,17 @@ const SERVER_PY = [
   's.bind(("0.0.0.0", 80))',
   's.listen(1)',
   'print("LISTEN", ip)',
+  'n = 0',
+  // Blocking server with NO per-client try/except (like the relay example):
+  // if the gateway ever forwarded an oversized request or RST a stale
+  // connection, recv()/the next accept() would raise ECONNRESET and kill
+  // this loop, so a second request would never be served.
   'while True:',
   '    cl, addr = s.accept()',
-  '    try:',
-  '        cl.recv(512)',
-  '        cl.send(b"HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n<html><body>VELXIO-PICO-OK</body></html>")',
-  '    except Exception as e:',
-  '        print("SRVERR", repr(e))',
+  '    cl.recv(512)',
+  '    n += 1',
+  '    print("REQ", n)',
+  '    cl.send(b"HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n<html><body>VELXIO-PICO-OK</body></html>")',
   '    cl.close()',
 ].join('\n');
 
@@ -113,34 +117,43 @@ describe.skipIf(!process.env.CYW43_GATEWAY_E2E)('Pico W IoT gateway inbound', ()
     }
     expect(serial).toMatch(/LISTEN 10\.13\.37\.42/);
 
-    // 2. Fire the gateway request and keep stepping the chip so it can
-    //    accept the inbound connection and serve the page.
+    // 2. Fire TWO sequential gateway requests, the first carrying a large
+    //    header (simulating a real browser's cookies/User-Agent). The chip's
+    //    non-resilient blocking server must serve BOTH (proving the gateway
+    //    forwards a lean request and never RSTs the chip on cleanup).
     const gwUrl = `${API_BASE}/gateway/${encodeURIComponent(clientId)}/`;
-    let result: { status: number; body: string } | null = null;
-    let err: unknown = null;
-    const fetchP = fetch(gwUrl)
-      .then(async (r) => { result = { status: r.status, body: await r.text() }; })
-      .catch((e) => { err = e; });
+    const bigHeader = { 'X-Browser-Junk': 'a'.repeat(4096) };
+    const doFetch = async (path: string, headers?: Record<string, string>) => {
+      let r: { status: number; body: string } | null = null;
+      let e: unknown = null;
+      const p = fetch(gwUrl + path, headers ? { headers } : undefined)
+        .then(async (resp) => { r = { status: resp.status, body: await resp.text() }; })
+        .catch((x) => { e = x; });
+      const dl = Date.now() + 25_000;
+      while (Date.now() < dl && r === null && e === null) {
+        sim.runFrameForTime(10);
+        await new Promise((res) => setTimeout(res, 0));
+      }
+      await p;
+      return { r, e };
+    };
 
-    const reqDeadline = Date.now() + 30_000;
-    while (Date.now() < reqDeadline && result === null && err === null) {
-      sim.runFrameForTime(10);
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    await fetchP;
+    const first = await doFetch('', bigHeader);   // page load (browser-sized)
+    const second = await doFetch('on');           // the toggle
 
     try { bridge.disconnect(); } catch { /* noop */ }
     try { sim.stop(); } catch { /* noop */ }
 
-    // eslint-disable-next-line no-console
     console.log('\n===== GATEWAY E2E =====\nclientId=' + clientId +
-      '\nserial(PY)=' + serial.split('\n').filter((l) => l.startsWith('PY') || l.startsWith('LISTEN') || l.startsWith('SRV')).join(' | ') +
-      '\nfetch=' + JSON.stringify(result) + (err ? ' err=' + String(err) : '') +
-      '\npkts=\n' + pktlog.join('\n'));
+      '\nserial=' + serial.split('\n').filter((l) => /^(PYIP|LISTEN|REQ|SRV|Traceback|OSError)/.test(l)).join(' | ') +
+      '\nfirst=' + JSON.stringify(first.r) + '\nsecond=' + JSON.stringify(second.r));
 
-    expect(err).toBeNull();
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(200);
-    expect(result!.body).toContain('VELXIO-PICO-OK');
+    expect(first.e).toBeNull();
+    expect(first.r?.status).toBe(200);
+    expect(first.r?.body).toContain('VELXIO-PICO-OK');
+    // The blocking server survived the first request and served the second.
+    expect(second.r?.status).toBe(200);
+    expect(serial).toContain('REQ 2');
+    expect(serial).not.toMatch(/Traceback|ECONNRESET/);
   }, 140_000);
 });
