@@ -367,6 +367,8 @@
     "releases": {
       "heading": "Recent releases",
       "latest": "Latest",
+      "v3Tagline": "Retro CPUs, multi-board systems, full-circuit accuracy",
+      "v3Blurb": "Programmable Z80/8080/4004 retro CPUs with custom ROM, MicroSD and ePaper emulation, true multi-board UART/I2C/SPI interconnect, ESP32-CAM, full undo/redo, the complete ngspice WASM migration, an 88% smaller bundle, and 100+ new examples.",
       "v25Tagline": "Arduino meets SPICE in your browser",
       "v25Blurb": "Real-time analog circuit simulation via ngspice-WASM, wired to Arduino, ESP32 and Raspberry Pi Pico. 100+ SPICE-accurate components, live ammeters and voltmeters, 40 new analog/hybrid examples — co-simulated with your firmware.",
       "v2Tagline": "Multi-board canvas, ESP32, Raspberry Pi 3",

@@ -11,8 +11,11 @@ import type { I2CBusManager } from '../I2CBusManager';
 import { SPIBus, SPIDevice } from './SPIBus';
 import { WasiShim, type SimNanosFn, type WriteStdoutFn } from './WasiShim';
 import { setChipPinDrive } from './chipPinDrives';
-import { isSyntheticChipPin } from './syntheticPins';
+import { isSyntheticChipPin, isSyntheticNetPin } from './syntheticPins';
 import { requestElectricalResolve } from '../spice/electricalResolveHook';
+import { chipBusEnabled } from './chipNets';
+import { setBusDrive, clearBusDriversForChip } from './busNets';
+import { modeToDrive } from './busLogic';
 
 function readCString(memory: WebAssembly.Memory, ptr: number): string {
   const u8 = new Uint8Array(memory.buffer);
@@ -94,6 +97,9 @@ interface PinEntry {
   name: string;
   mode: number;
   arduinoPin: number | null;
+  /** Last level written/initialized — used to compute the bus drive on a mode
+   *  flip (e.g. OUTPUT -> INPUT releases the bus without forgetting the level). */
+  value: 0 | 1;
 }
 
 interface AttrEntry {
@@ -257,10 +263,24 @@ export class ChipInstance {
     this.wasi.flush();
   }
 
-  tickTimers(nowNanos: bigint | number): void {
+  /**
+   * Fire due timers up to sim-time `nowNanos`.
+   *
+   * `budgetMs` caps the wall-clock time spent in one call. A heavy multi-chip
+   * bus (e.g. a Z80 fetching from external ROM/RAM through the settle kernel)
+   * cannot run a real-time CPU clock in a single animation frame — without a
+   * cap the loop would fire tens of thousands of times and freeze the tab. With
+   * a budget the loop bails when exceeded, leaving each timer's nextFire where
+   * it is so the next call resumes from there: the simulation simply advances
+   * slower than real time (it boots over a few seconds) while the UI stays
+   * responsive. budgetMs = 0 (the default, used by headless tests) runs every
+   * due fire in one call.
+   */
+  tickTimers(nowNanos: bigint | number, budgetMs = 0): void {
     const now = BigInt(nowNanos);
     const table = this.exports?.__indirect_function_table as WebAssembly.Table | undefined;
     if (!table) return;
+    const startWall = budgetMs > 0 ? performance.now() : 0;
     for (const t of this.timers) {
       if (!t.active) continue;
       while (t.active && now >= t.nextFire) {
@@ -272,6 +292,10 @@ export class ChipInstance {
           t.nextFire += t.period;
         } else {
           t.active = false;
+        }
+        if (budgetMs > 0 && performance.now() - startWall > budgetMs) {
+          this.wasi.flush();
+          return;
         }
       }
     }
@@ -292,6 +316,9 @@ export class ChipInstance {
       for (const d of this.spiDevices) this.spiBus.removeDevice(d.device);
     }
     this.spiDevices = [];
+    // Stop driving any bus nets this chip contributed to, then re-resolve them
+    // so a removed chip releases the bus (its drivers no longer count).
+    if (this.componentId) clearBusDriversForChip(this.pinManager, this.componentId);
     this.disposed = true;
   }
 
@@ -364,7 +391,28 @@ export class ChipInstance {
    * on the net) are emitted as chip sources; a chip pin wired to a real board
    * pin is already driven by that board's voltage source.
    */
+  /** True if this pin sits on a multi-chip BUS net (Phase 1): its key is a
+   *  syntheticNetPin and the chipbus flag is on. Such pins resolve through the
+   *  driver-strength registry (busNets) instead of last-writer-wins PinManager. */
+  private _isBusPin(p: PinEntry): boolean {
+    return p.arduinoPin != null && chipBusEnabled() && isSyntheticNetPin(p.arduinoPin);
+  }
+
+  /** Register this pin's current (mode, value) as a bus driver and re-resolve. */
+  private _busDrive(p: PinEntry): void {
+    if (p.arduinoPin == null) return;
+    setBusDrive(
+      this.pinManager,
+      p.arduinoPin,
+      `${this.componentId}::${p.name}`,
+      modeToDrive(p.mode, p.value),
+    );
+  }
+
   private _syncSpiceDrive(p: PinEntry): void {
+    // A bus net is served by the digital driver-strength path; emitting a SPICE
+    // chip source per chip on the same net would create false analog contention.
+    if (this._isBusPin(p)) return;
     if (!this.componentId || !p.name) return;
     if (p.arduinoPin == null || !isSyntheticChipPin(p.arduinoPin)) return;
     const isOutput =
@@ -383,9 +431,12 @@ export class ChipInstance {
     const name = readCString(this.memory!, namePtr);
     const handle = this.pins.length;
     const arduinoPin = this.wires.has(name) ? this.wires.get(name)! : null;
-    const p: PinEntry = { name, mode, arduinoPin };
+    const value: 0 | 1 = mode === ChipInstance.MODE_OUTPUT_HIGH ? 1 : 0;
+    const p: PinEntry = { name, mode, arduinoPin, value };
     this.pins.push(p);
-    if (arduinoPin != null) {
+    if (this._isBusPin(p)) {
+      this._busDrive(p);
+    } else if (arduinoPin != null) {
       if (mode === ChipInstance.MODE_OUTPUT_LOW)  this.pinManager.triggerPinChange(arduinoPin, false);
       if (mode === ChipInstance.MODE_OUTPUT_HIGH) this.pinManager.triggerPinChange(arduinoPin, true);
     }
@@ -402,7 +453,12 @@ export class ChipInstance {
   private _pin_write(handle: number, value: number): void {
     const p = this.pins[handle];
     if (!p || p.arduinoPin == null) return;
-    this.pinManager.triggerPinChange(p.arduinoPin, value !== 0);
+    p.value = value !== 0 ? 1 : 0;
+    if (this._isBusPin(p)) {
+      this._busDrive(p);
+    } else {
+      this.pinManager.triggerPinChange(p.arduinoPin, value !== 0);
+    }
     this._syncSpiceDrive(p);
   }
 
@@ -422,7 +478,12 @@ export class ChipInstance {
     const p = this.pins[handle];
     if (!p) return;
     p.mode = mode;
-    if (p.arduinoPin != null) {
+    // OUTPUT_LOW/HIGH carry an initial level; plain OUTPUT keeps the last value.
+    if (mode === ChipInstance.MODE_OUTPUT_LOW) p.value = 0;
+    if (mode === ChipInstance.MODE_OUTPUT_HIGH) p.value = 1;
+    if (this._isBusPin(p)) {
+      this._busDrive(p);
+    } else if (p.arduinoPin != null) {
       if (mode === ChipInstance.MODE_OUTPUT_LOW)  this.pinManager.triggerPinChange(p.arduinoPin, false);
       if (mode === ChipInstance.MODE_OUTPUT_HIGH) this.pinManager.triggerPinChange(p.arduinoPin, true);
     }
@@ -657,6 +718,25 @@ export class ChipInstance {
   /** True if the chip declared a framebuffer (post-chip_setup). */
   get hasFramebuffer(): boolean {
     return this._framebuffer !== null;
+  }
+
+  // ── Keyboard (chips that export set_key, e.g. galaksija-keyboard) ─────────
+
+  /** True if the chip exposes a host-driven keyboard via an exported
+   *  `set_key(offset, down)`. The host (CustomChipPart) bridges browser key
+   *  events into it. */
+  get hasKeyboard(): boolean {
+    return typeof this.exports?.set_key === 'function';
+  }
+
+  /** Push a key state into the chip's key table. `offset` is the chip-specific
+   *  matrix offset; `down` is press/release. No-op if the chip has no keyboard. */
+  setKey(offset: number, down: boolean): void {
+    try {
+      this.exports?.set_key?.(offset, down ? 1 : 0);
+    } catch {
+      /* swallow chip errors */
+    }
   }
 
   // ── Timers ───────────────────────────────────────────────────────────────

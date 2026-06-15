@@ -262,3 +262,29 @@ python test_espidf_compiler.py
 | `frontend/src/utils/compilationLogger.ts` | Ninja `FAILED:` block state machine; classifies lines as `'error'` |
 | `frontend/src/components/editor/CompilationConsole.tsx` | Auto-switches to Errors filter when new errors arrive |
 | `backend/test_espidf_compiler.py` | 25-test suite covering all library resolution logic |
+
+---
+
+## Core-first resolution (2026-06 fix)
+
+The "Library Search Order" / `_detect_external_includes` description above
+implied core headers like `WiFi.h` / `Wire.h` were skipped. They were not —
+`_BUILTIN_HEADERS` never contained them, so a user library that shipped a
+same-named header could shadow the arduino-esp32 core. `WiFiEspAT/src/WiFi.h`
+(installed via the Library Manager) shadowed the core `WiFi.h`, dragging
+`EspAtDrv.cpp` into the build, whose `const char OK[]` / `const char STATUS[]`
+collide with ESP-IDF's `enum STATUS { ... OK ... }` in `rom/ets_sys.h`. Result:
+every ESP32 sketch that `#include <WiFi.h>` failed to compile.
+
+Fix in `_resolve_library_components`:
+
+1. **Core-first.** Before any user-lib lookup, a header is skipped if it is
+   provided by the arduino-esp32 core. The set is computed by
+   `_core_provided_headers()` scanning `$ARDUINO_ESP32_PATH/{cores,libraries}`
+   (cached), unioned with the static `_CORE_ESP32_HEADERS` fallback. A core
+   header can never resolve to a user library, regardless of install order.
+2. **Architecture guard.** A user lib that resolves a header but whose
+   `library.properties` `architectures=` excludes `esp32`/`*` is skipped
+   (`_library_supports_esp32()`).
+
+Regression tests: `test/backend/unit/test_espidf_core_first.py`.

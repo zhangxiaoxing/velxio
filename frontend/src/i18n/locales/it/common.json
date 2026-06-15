@@ -405,5 +405,30 @@
         "failed": "Registrazione fallita."
       }
     }
+  },
+  "quotaModal": {
+    "titleFree": "Hai raggiunto il limite gratuito di oggi",
+    "titlePaid": "Hai raggiunto il tuo limite giornaliero",
+    "bodyFree": "Gli account gratuiti ricevono {{cap}} messaggi AI al giorno. Pro ($15/mese) ti dà {{proCap}}/giorno — {{multiplier}}× il limite. Oppure attendi il ripristino della quota.",
+    "bodyPaid": "Il tuo piano {{plan}} consente {{cap}} messaggi al giorno. Passa a un livello superiore o attendi il ripristino.",
+    "today": "Oggi",
+    "thisMonth": "Questo mese",
+    "resets": "Ripristino",
+    "ctaUpgrade": "Passa a Pro — $15/mese",
+    "ctaSeePlans": "Vedi piani",
+    "ctaWait": "Aspetta il ripristino"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "Impossibile aggiornare la visibilità — riprova.",
+      "visibility": {
+        "publicLabel": "Pubblico",
+        "publicHint": "Chiunque può trovare questo progetto su velxio.dev.",
+        "unlistedLabel": "Non elencato",
+        "unlistedHint": "Nascosto dalla ricerca e dalla galleria — accessibile solo tramite link di condivisione.",
+        "privateLabel": "Privato",
+        "privateHint": "Solo tu puoi vedere questo progetto."
+      }
+    }
   }
 }

@@ -233,6 +233,15 @@ export const EditorToolbar = ({
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
+  // Open the Library Manager when another component (e.g. the velxio.json entry
+  // in the FileExplorer) asks for it via a window event. Avoids prop-drilling
+  // the modal state down to the explorer.
+  useEffect(() => {
+    const open = () => setLibManagerOpen(true);
+    window.addEventListener('velxio-open-library-manager', open);
+    return () => window.removeEventListener('velxio-open-library-manager', open);
+  }, []);
+
   useEffect(() => {
     if (!moreMenuOpen) return;
     const onClickOutside = (e: MouseEvent) => {
@@ -508,6 +517,9 @@ export const EditorToolbar = ({
         {
           boardOptions: activeBoard?.boardOptions,
           spiffsFiles: activeBoard?.spiffsFiles,
+          // P2.4 — THIS board's declared manifest (compile scope). Per-board so
+          // two boards can use different libraries without clashing.
+          libraries: activeBoard?.libraries?.length ? activeBoard.libraries : null,
         },
       );
 
@@ -980,7 +992,7 @@ export const EditorToolbar = ({
               })),
             ]);
           },
-          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles },
+          { boardOptions: board.boardOptions, spiffsFiles: board.spiffsFiles, libraries: board.libraries?.length ? board.libraries : null },
         );
 
         const resultLogs = parseCompileResult(result, label, boardTarget);

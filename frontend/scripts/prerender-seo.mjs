@@ -33,6 +33,12 @@ if (!existsSync(join(distDir, 'index.html'))) {
 const baseHtml = readFileSync(join(distDir, 'index.html'), 'utf-8');
 const DOMAIN = 'https://velxio.dev';
 
+// nginx serves each prerendered route as `<route>/index.html` and
+// 301-redirects the slash-less URL to add the trailing slash. Canonical +
+// og:url must therefore use the slash form (== the served URL == the sitemap
+// entry), or Google sees a canonical that points to a redirecting URL.
+const withSlash = (u) => (u.endsWith('/') ? u : `${u}/`);
+
 // ── Mock browser globals for SSR ────────────────────────────────────────────
 // Zustand's persist middleware and some components access these at import time.
 if (typeof globalThis.localStorage === 'undefined') {
@@ -96,7 +102,7 @@ try {
     );
 
     // Add/replace canonical URL
-    const canonicalTag = `<link rel="canonical" href="${seoMeta.url}" />`;
+    const canonicalTag = `<link rel="canonical" href="${withSlash(seoMeta.url)}" />`;
     if (html.includes('<link rel="canonical"')) {
       html = html.replace(/<link rel="canonical"[^>]*\/>/, canonicalTag);
     } else {
@@ -114,7 +120,7 @@ try {
     );
     html = html.replace(
       /<meta property="og:url" content="[^"]*"/,
-      `<meta property="og:url" content="${seoMeta.url}"`
+      `<meta property="og:url" content="${withSlash(seoMeta.url)}"`
     );
 
     // Replace Twitter tags
@@ -169,7 +175,7 @@ try {
       `<meta name="description" content="${exRoute.description}"`
     );
 
-    const canonicalTag = `<link rel="canonical" href="${exRoute.url}" />`;
+    const canonicalTag = `<link rel="canonical" href="${withSlash(exRoute.url)}" />`;
     if (html.includes('<link rel="canonical"')) {
       html = html.replace(/<link rel="canonical"[^>]*\/>/, canonicalTag);
     } else {
@@ -178,7 +184,7 @@ try {
 
     html = html.replace(/<meta property="og:title" content="[^"]*"/, `<meta property="og:title" content="${exRoute.title}"`);
     html = html.replace(/<meta property="og:description" content="[^"]*"/, `<meta property="og:description" content="${exRoute.description}"`);
-    html = html.replace(/<meta property="og:url" content="[^"]*"/, `<meta property="og:url" content="${exRoute.url}"`);
+    html = html.replace(/<meta property="og:url" content="[^"]*"/, `<meta property="og:url" content="${withSlash(exRoute.url)}"`);
     html = html.replace(/<meta name="twitter:title" content="[^"]*"/, `<meta name="twitter:title" content="${exRoute.title}"`);
     html = html.replace(/<meta name="twitter:description" content="[^"]*"/, `<meta name="twitter:description" content="${exRoute.description}"`);
 

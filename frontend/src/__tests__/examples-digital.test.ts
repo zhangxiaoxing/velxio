@@ -79,12 +79,15 @@ describe('digitalExamples — shape', () => {
     }
   });
 
-  it('every component type has a SPICE mapping', () => {
+  it('every component type has a SPICE mapping (flip-flops are digital-engine-only)', () => {
     const mapped = new Set(mappedMetadataIds());
     const unmapped = new Set<string>();
     for (const ex of digitalExamples) {
       for (const c of ex.components) {
         const id = c.type.replace(/^(wokwi|velxio)-/, '');
+        // Flip-flops have no SPICE mapper by design (no edge detection at DC);
+        // they are evaluated by the digital gate engine, not ngspice.
+        if (id.startsWith('flip-flop')) continue;
         if (!mapped.has(id)) unmapped.add(`${ex.id}:${c.id}(${id})`);
       }
     }
@@ -110,17 +113,25 @@ describe('digitalExamples — shape', () => {
     }
   });
 
-  it('every example has at least one logic gate', () => {
+  it('every example has at least one logic gate or flip-flop', () => {
     for (const ex of digitalExamples) {
-      const gates = ex.components.filter((c) => c.type.startsWith('velxio-logic-gate-'));
-      expect(gates.length, `${ex.id} has no logic gate`).toBeGreaterThanOrEqual(1);
+      const logic = ex.components.filter(
+        (c) => c.type.startsWith('velxio-logic-gate-') || c.type.startsWith('velxio-flip-flop-'),
+      );
+      expect(logic.length, `${ex.id} has no logic gate or flip-flop`).toBeGreaterThanOrEqual(1);
     }
   });
 });
 
+/** A sequential example contains a flip-flop — it is evaluated by the digital
+ *  gate engine, not ngspice, so it is exempt from the SPICE netlist checks. */
+const isSequential = (ex: (typeof digitalExamples)[number]) =>
+  ex.components.some((c) => c.type.startsWith('velxio-flip-flop-'));
+
 describe('digitalExamples — netlist generation', () => {
   it('each example produces a non-empty netlist with a ground net', () => {
     for (const ex of digitalExamples) {
+      if (isSequential(ex)) continue; // flip-flop circuits have no SPICE netlist
       const { netlist } = buildNetlist({
         components: toSpiceComponents(ex),
         wires: toSpiceWires(ex),

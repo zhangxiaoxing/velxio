@@ -115,6 +115,9 @@ export async function loadExample(
   // so no PUT goes out.
   useProjectStore.getState().clearCurrentProject();
 
+  // P2.4 — this example's declared manifest (compile scope) is assigned to each
+  // board it creates at the END of this function (the boards don't exist yet).
+
   // Loading a new example always starts unpaused — otherwise the canvas
   // would open with every LED frozen at the previous example's state.
   useElectricalStore.getState().setPaused(false);
@@ -370,5 +373,15 @@ export async function loadExample(
       })),
     );
     recalculateAllWirePositions();
+  }
+
+  // P2.4 — assign this example's declared manifest to every board it created
+  // (the per-board compile scope). Examples declare one library set today, so
+  // each board gets it; the user can refine per board via velxio.json.
+  {
+    const sim = useSimulatorStore.getState();
+    const libs =
+      example.libraries && example.libraries.length ? example.libraries : undefined;
+    for (const b of sim.boards) sim.updateBoard(b.id, { libraries: libs });
   }
 }

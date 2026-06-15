@@ -386,14 +386,26 @@ export const SEO_ROUTES: SeoRoute[] = [
   },
   {
     path: '/v2-5',
-    priority: 0.95,
-    changefreq: 'weekly',
+    priority: 0.9,
+    changefreq: 'monthly',
     seoMeta: {
       title:
         'Velxio 2.5 — Arduino + SPICE Analog Circuit Simulator in Your Browser | ngspice-WASM',
       description:
         'Velxio 2.5 brings real-time analog circuit simulation via ngspice-WASM. Hybrid digital + analog co-simulation: resistors, capacitors, inductors, op-amps, transistors, voltmeters, ammeters — wired to Arduino, ESP32, RP2040 GPIO/ADC. 40+ circuit examples. Free and open-source.',
       url: `${DOMAIN}/v2-5`,
+    },
+  },
+  {
+    path: '/v3',
+    priority: 0.95,
+    changefreq: 'weekly',
+    seoMeta: {
+      title:
+        'Velxio 3.0 — Retro CPUs, MicroSD, ePaper & Multi-Board Embedded Simulator',
+      description:
+        'Velxio 3.0 adds programmable retro CPUs (Z80, 8080, 4004, 4040, 8086), MicroSD card emulation, ePaper displays, true multi-board UART/I2C/SPI interconnect, full undo/redo and 100+ new examples. Free, open-source, browser-based — Arduino, ESP32, RP2040, STM32, Raspberry Pi and more.',
+      url: `${DOMAIN}/v3`,
     },
   },
 

@@ -29,19 +29,21 @@
         "message": "Bibliothek fehlt? Installieren Sie sie über den",
         "cta": "Bibliotheksmanager",
         "dismiss": "Schließen"
-      }
+      },
+      "exportBom": "Stückliste exportieren (CSV — Pro)",
+      "exportScreenshot": "Schaltplan als Bild exportieren (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "ARBEITSBEREICH",
       "newWorkspace": "Neuer Arbeitsbereich (löscht Boards, Komponenten, Leitungen und Dateien)",
       "saveProject": "Projekt speichern (Strg+S)",
-      "clickToEdit": "Klicken zum Bearbeiten",
+      "clickToEdit": "zum Bearbeiten klicken",
       "collapse": "Einklappen",
       "expand": "Ausklappen",
       "newFileInBoard": "Neue Datei in diesem Board",
       "unsavedChanges": "Ungespeicherte Änderungen",
       "unsavedSuffix": "ungespeichert",
-      "emptyState": "Fügen Sie ein Board zur Leinwand hinzu, um mit der Codebearbeitung zu beginnen.",
+      "emptyState": "Fügen Sie ein Board zur Zeichenfläche hinzu, um mit der Codebearbeitung zu beginnen.",
       "confirmDelete": "Diese Datei löschen?",
       "status": {
         "running": "Läuft",
@@ -109,7 +111,7 @@
       },
       "activeBoard": "Aktives Board",
       "noBoard": "Kein Board",
-      "noBoardHint": "Kein Board auf der Leinwand – fügen Sie eines mit der Schaltfläche „Hinzufügen“ hinzu, um Code zu kompilieren und auszuführen",
+      "noBoardHint": "Kein Board auf der Zeichenfläche — fügen Sie eines mit der Schaltfläche „Hinzufügen“ hinzu, um Code zu kompilieren und auszuführen",
       "undo": {
         "label": "Rückgängig",
         "title": "Rückgängig: {{description}} (Strg+Z)",
@@ -126,7 +128,7 @@
       "scope": "Oszilloskop",
       "zoomIn": "Vergrößern",
       "zoomOut": "Verkleinern",
-      "resetView": "Ansicht zurücksetzen (Klicken zum Zurücksetzen)",
+      "resetView": "Ansicht zurücksetzen (zum Zurücksetzen klicken)",
       "componentCount_one": "{{count}} Komponente",
       "componentCount_other": "{{count}} Komponenten",
       "addComponentTitle": "Komponente hinzufügen",
@@ -208,7 +210,7 @@
       "resumeTitle": "Aufnahme fortsetzen",
       "pause": "Pause",
       "run": "Starten",
-      "clearTitle": "Alle aufgezeichneten Samples löschen",
+      "clearTitle": "Alle erfassten Samples löschen",
       "clear": "Löschen",
       "noChannels": "Keine Kanäle hinzugefügt.",
       "noChannelsHint": "Klicken Sie auf „+ Kanal hinzufügen“, um einen Pin zu überwachen.",
@@ -216,8 +218,8 @@
     },
     "componentProps": {
       "close": "Schließen",
-      "tapToConnect": "Tippen Sie auf einen Pin zum Verbinden:",
-      "tapToWire": "Tippen Sie auf einen Pin zum Verdrahten:",
+      "tapToConnect": "Tippen Sie auf einen Pin, um zu verbinden:",
+      "tapToWire": "Tippen Sie auf einen Pin, um zu verdrahten:",
       "pinRoles": "Pin-Rollen:",
       "arduinoPin": "Arduino-Pin:",
       "confirmDelete": "{{name}} löschen?",
@@ -331,26 +333,26 @@
       "p1": "Velxio begann als persönliche Erkundung, wie Mikrocontroller-Emulatoren intern funktionieren – CPU-Befehle, Speicherverwaltung, Peripherie-Timing und Low-Level-Architektur. Was als Lernprojekt während eines Urlaubs begann, wuchs schnell zu etwas Größerem heran.",
       "p2": "Die Idee war einfach: <strong>Was wäre, wenn jeder Arduino-, ESP32- und Raspberry-Pi-Boards direkt im Browser simulieren könnte, ohne Hardware zu kaufen, ohne Toolchains zu installieren, ohne Cloud-Konten?</strong>",
       "p3": "Velxio v1 startete auf Product Hunt und Hacker News und unterstützte Arduino Uno und Raspberry Pi Pico. Das Feedback der Maker- und Embedded-Community war unglaublich – und trieb das Projekt voran.",
-      "p4": "<strong>Velxio 2.0</strong> brachte ESP32-Emulation über QEMU (mit dem lcgamboa-Fork), einen Raspberry Pi 3 mit echtem Linux, RISC-V-Unterstützung für ESP32-C3 und CH32V003, realistische Sensor-Simulation (DHT22, HC-SR04, WS2812B NeoPixel) und 19 Boards auf 5 CPU-Architekturen – alle mit echtem kompiliertem Code.",
-      "p5": "Der v2-Start erreichte die <strong>Titelseite von Hacker News für über 20 Stunden</strong>, erreichte fast 600 GitHub-Sterne und Tausende von Besuchern in weniger als 24 Stunden. Es wird jetzt von Studenten, Professoren und Machern auf der ganzen Welt genutzt."
+      "p4": "<strong>Velxio 2.0</strong> wurde mit ESP32-Emulation über QEMU (unter Verwendung des lcgamboa-Forks), einem Raspberry Pi 3 mit echtem Linux, RISC-V-Unterstützung für ESP32-C3 und CH32V003, realistischer Sensor-Simulation (DHT22, HC-SR04, WS2812B NeoPixel) und 19 Boards auf 5 CPU-Architekturen ausgeliefert – alle mit echtem kompiliertem Code.",
+      "p5": "Der v2-Start erreichte die <strong>Titelseite von Hacker News für über 20 Stunden</strong> und erreichte fast 600 GitHub-Sterne und Tausende von Besuchern in weniger als 24 Stunden. Es wird jetzt von Studenten, Professoren und Makern auf der ganzen Welt genutzt."
     },
     "howItWorks": {
       "heading": "Wie es funktioniert",
-      "avrRp2040Body": "Zyklengenaue Emulation läuft vollständig in Ihrem Browser mit avr8js und rp2040js. Für die Simulation ist kein Backend erforderlich.",
+      "avrRp2040Body": "Zyklengenaue Emulation läuft vollständig im Browser mit avr8js und rp2040js. Für die Simulation wird kein Backend benötigt.",
       "esp32Body": "Xtensa ESP32 und ESP32-S3 laufen auf Backend-QEMU (lcgamboa-Fork) mit echten Flash-Images, GPIO, ADC und Timern.",
       "riscvBody": "ESP32-C3 (DevKit, XIAO, SuperMini) und CH32V003 werden über den QEMU lcgamboa-Fork mit libqemu-riscv32 emuliert, dem gleichen Backend-Muster wie Xtensa ESP32.",
       "raspiBody": "Vollständiges ARM Cortex-A53 Linux über QEMU raspi3b – startet echtes Raspberry Pi OS und führt Python mit RPi.GPIO aus."
     },
     "openSource": {
       "heading": "Open-Source-Philosophie",
-      "lead": "Velxio ist <strong>100 % Open Source</strong> unter der AGPLv3-Lizenz. Keine Cloud-Abhängigkeit, keine Studentenkonten, keine Daten verlassen Ihr Netzwerk. Universitäten und Bootcamps können es mit einem einzigen Docker-Befehl auf ihren eigenen Servern bereitstellen und jedem Studenten Zugang zu einer vollständigen Embedded-Entwicklungsumgebung geben – kostenlos.",
+      "lead": "Velxio ist <strong>100 % Open Source</strong> unter der AGPLv3-Lizenz. Keine Cloud-Abhängigkeit, keine Studentenkonten, keine Daten, die Ihr Netzwerk verlassen. Universitäten und Bootcamps können es mit einem einzigen Docker-Befehl auf ihren eigenen Servern bereitstellen und jedem Studenten Zugang zu einer vollständigen Embedded-Entwicklungsumgebung geben – kostenlos.",
       "creditsIntro": "Das Projekt baut auf erstaunlicher Open-Source-Arbeit der Community auf:",
       "credits": {
         "avr8js": "AVR8-CPU-Emulation von Wokwi",
         "rp2040js": "RP2040-Emulation von Wokwi",
         "wokwiElements": "48+ visuelle elektronische Komponenten von Wokwi",
         "qemuLcgamboa": "ESP32- und Raspberry-Pi-QEMU-Emulation",
-        "arduinoCli": "Arduino-Kompilierungswerkzeugkette"
+        "arduinoCli": "Arduino-Kompilierungstoolchain"
       },
       "inspiredBy": "Velxio wurde von <a>Wokwi</a> inspiriert, einem fantastischen Tool. Das Ziel von Velxio ist es, einen anderen Weg zu gehen: vollständig Open Source, selbst hostbar und Unterstützung mehrerer heterogener Boards in derselben Schaltung."
     },
@@ -358,21 +360,23 @@
       "heading": "Der Schöpfer",
       "role": "Application Architect @ IBM · Montevideo, Uruguay",
       "bio1": "Application Architect mit über 10 Jahren Erfahrung in der Leitung der Entwicklung großer Unternehmensökosysteme. Spezialist für Generative KI (LLMs, RAG, LangChain), Cloud-Native-Architekturen (OpenShift, Kubernetes) und zertifizierter Odoo-ERP-Experte. Derzeit bei IBM an Unternehmensanwendungen für die Uruguayische Staatsversicherungsbank (BSE) tätig.",
-      "bio2": "Studierte Informatik an der Universidad de Oriente in Kuba (2012-2017), zog dann nach Uruguay, wo er eine Karriere mit Stationen bei Quanam (Odoo-Implementierungen für Regierungsinstitutionen) und IBM (Unternehmensarchitektur für BPS und BSE) aufbaute.",
+      "bio2": "Studierte Computer Science Engineering an der Universidad de Oriente in Kuba (2012-2017), zog dann nach Uruguay, wo er eine Karriere mit Stationen bei Quanam (Odoo-Implementierungen für Regierungsinstitutionen) und IBM (Unternehmensarchitektur für BPS und BSE) aufbaute.",
       "bio3": "Programmier- und Robotik-Enthusiast. Schöpfer anderer Open-Source-Projekte, darunter ein <a>3D-Rennspiel, das auf einem ESP32 läuft</a> (viral auf Reddit mit über 40.000 Aufrufen) und ein iPod-Classic-Klon für Raspberry Pi.",
       "techStack": "Technologie-Stack"
     },
     "releases": {
       "heading": "Aktuelle Veröffentlichungen",
       "latest": "Neueste",
+      "v3Tagline": "Retro-CPUs, Multi-Board-Systeme, vollständige Schaltungsgenauigkeit",
+      "v3Blurb": "Programmierbare Z80/8080/4004 Retro-CPUs mit benutzerdefiniertem ROM, MicroSD- und ePaper-Emulation, echter Multi-Board-UART/I2C/SPI-Verbindung, ESP32-CAM, vollständiges Rückgängig/Wiederholen, die vollständige ngspice-WASM-Migration, ein 88 % kleineres Bundle und über 100 neue Beispiele.",
       "v25Tagline": "Arduino trifft SPICE in Ihrem Browser",
-      "v25Blurb": "Echtzeit-Analogschaltungssimulation über ngspice-WASM, verbunden mit Arduino, ESP32 und Raspberry Pi Pico. Über 100 SPICE-genaue Komponenten, Live-Amperemeter und Voltmeter, 40 neue analoge/hybride Beispiele – gemeinsam mit Ihrer Firmware simuliert.",
-      "v2Tagline": "Multi-Board-Leinwand, ESP32, Raspberry Pi 3",
-      "v2Blurb": "Vollständige QEMU-gesteuerte ESP32-Emulation mit WiFi/BLE, Raspberry Pi 3B Linux, MicroPython-Unterstützung auf Pico/ESP32, benutzerdefinierte WASM-Chips und eine neu gestaltete Leinwand mit Multi-Board-Co-Simulation.",
+      "v25Blurb": "Echtzeit-Analogschaltungssimulation über ngspice-WASM, verbunden mit Arduino, ESP32 und Raspberry Pi Pico. Über 100 SPICE-genaue Komponenten, Live-Amperemeter und Voltmeter, 40 neue analoge/hybride Beispiele – co-simuliert mit Ihrer Firmware.",
+      "v2Tagline": "Multi-Board-Zeichenfläche, ESP32, Raspberry Pi 3",
+      "v2Blurb": "Vollständige QEMU-gesteuerte ESP32-Emulation mit WiFi/BLE, Raspberry Pi 3B Linux, MicroPython-Unterstützung auf Pico/ESP32, benutzerdefinierte WASM-Chips und eine neu gestaltete Zeichenfläche mit Multi-Board-Co-Simulation.",
       "readNotes": "Startnotizen lesen →"
     },
     "quote": {
-      "p1": "\"Ich habe von 2012 bis 2017 Informatik in Kuba studiert, und als ich nach Uruguay zog, war die häufigste Frage: <em>'Wie hast du als Ingenieur abschließen können, ohne Internet, ohne Computer, ohne YouTube?'</em>",
+      "p1": "\"Ich habe von 2012 bis 2017 in Kuba Informatik studiert, und als ich nach Uruguay zog, war die häufigste Frage: <em>'Wie hast du als Ingenieur abschließen können, ohne Internet, ohne Computer, ohne YouTube?'</em>",
       "p2": "Ich hatte nur 4 Worte für die Antwort: <strong>Durchhaltevermögen! Durchhaltevermögen! Durchhaltevermögen! Durchhaltevermögen!</strong>",
       "p3": "Es gibt keine bessere Motivation, als keinen Plan B zu haben.\""
     },

@@ -23,6 +23,20 @@ import { useElectricalStore } from '../../store/useElectricalStore';
 import { clearChipDrives } from '../customChips/chipPinDrives';
 import { requestElectricalResolve } from '../spice/electricalResolveHook';
 
+// Physical-key (KeyboardEvent.code) -> Galaksija keyboard matrix offset, from
+// the libretro Galaksija core's keyMap. The chip's set_key takes this offset;
+// reading 0x2000+offset on the bus returns pressed/released.
+const GALAKSIJA_KEY_OFFSET: Record<string, number> = {
+  KeyA: 1, KeyB: 2, KeyC: 3, KeyD: 4, KeyE: 5, KeyF: 6, KeyG: 7, KeyH: 8, KeyI: 9,
+  KeyJ: 10, KeyK: 11, KeyL: 12, KeyM: 13, KeyN: 14, KeyO: 15, KeyP: 16, KeyQ: 17,
+  KeyR: 18, KeyS: 19, KeyT: 20, KeyU: 21, KeyV: 22, KeyW: 23, KeyX: 24, KeyY: 25,
+  KeyZ: 26, ArrowUp: 27, ArrowDown: 28, ArrowLeft: 29, Backspace: 29,
+  ArrowRight: 30, Space: 31, Digit0: 32, Digit1: 33, Digit2: 34, Digit3: 35,
+  Digit4: 36, Digit5: 37, Digit6: 38, Digit7: 39, Digit8: 40, Digit9: 41,
+  Semicolon: 42, Quote: 43, Comma: 44, Equal: 45, Period: 46, Slash: 47,
+  Enter: 48, Tab: 49, Delete: 51, ShiftLeft: 53, ShiftRight: 53,
+};
+
 PartSimulationRegistry.register('custom-chip', {
   attachEvents: (_element, simulator, getArduinoPin, componentId) => {
     const sim = simulator as any;
@@ -153,6 +167,7 @@ PartSimulationRegistry.register('custom-chip', {
     let uartListener: ((byte: number) => void) | null = null;
     let rafHandle = 0;
     let disposed = false;
+    let keyboardCleanup: (() => void) | undefined;
 
     (async () => {
       try {
@@ -194,6 +209,42 @@ PartSimulationRegistry.register('custom-chip', {
           });
         }
 
+        // Bridge the browser keyboard → a chip's memory-mapped keyboard (a chip
+        // exporting set_key, e.g. galaksija-keyboard). Maps physical keys
+        // (e.code) to the chip's matrix offsets. Ignores keystrokes while an
+        // editable element (the code editor, an input) is focused so typing code
+        // is never hijacked; the user types into the computer by clicking the
+        // canvas first. Held keys send one press (the chip's firmware handles
+        // auto-repeat).
+        if (inst.hasKeyboard && typeof window !== 'undefined') {
+          const editable = () => {
+            const a = document.activeElement as HTMLElement | null;
+            return (
+              !!a &&
+              (a.tagName === 'INPUT' ||
+                a.tagName === 'TEXTAREA' ||
+                a.isContentEditable ||
+                a.closest('.monaco-editor') != null)
+            );
+          };
+          const onDown = (e: KeyboardEvent) => {
+            if (e.repeat || editable()) return;
+            const o = GALAKSIJA_KEY_OFFSET[e.code];
+            if (o !== undefined) { instance?.setKey(o, true); e.preventDefault(); }
+          };
+          const onUp = (e: KeyboardEvent) => {
+            if (editable()) return;
+            const o = GALAKSIJA_KEY_OFFSET[e.code];
+            if (o !== undefined) instance?.setKey(o, false);
+          };
+          window.addEventListener('keydown', onDown);
+          window.addEventListener('keyup', onUp);
+          keyboardCleanup = () => {
+            window.removeEventListener('keydown', onDown);
+            window.removeEventListener('keyup', onUp);
+          };
+        }
+
         // Drive the chip's timer-based execution every frame. Chips that
         // register a periodic `vx_timer_create` (e.g. a CPU-emulator chip
         // stepping its core, or a sensor publishing samples) need a
@@ -217,7 +268,12 @@ PartSimulationRegistry.register('custom-chip', {
             : simState.boards.some((b) => b.running);
           if (runnable) {
             try {
-              instance.tickTimers(BigInt(Math.floor(performance.now() * 1_000_000)));
+              // Cap per-frame compute at 6 ms so a slow multi-chip bus (a Z80
+              // running real-time over the settle kernel) degrades to a slower
+              // boot instead of freezing the tab. Fast single-chip examples
+              // finish their due fires well under the budget, so they are
+              // unaffected and still run at real time.
+              instance.tickTimers(BigInt(Math.floor(performance.now() * 1_000_000)), 6);
             } catch (e) {
               console.error(`[custom-chip:${componentId}] tickTimers threw:`, e);
             }
@@ -235,6 +291,7 @@ PartSimulationRegistry.register('custom-chip', {
       if (rafHandle) cancelAnimationFrame(rafHandle);
       rafHandle = 0;
       if (uartListener) bridges.uartListeners.delete(uartListener);
+      if (keyboardCleanup) keyboardCleanup();
       if (instance) instance.dispose();
       instance = null;
       // Drop this chip's SPICE voltage sources so a stopped chip stops

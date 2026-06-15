@@ -857,41 +857,85 @@ void loop() {
   // ════════════════════════════════════════════════════════════════════════════
 
   {
-    id: 'and-gate-alarm',
-    title: 'AND Gate Alarm',
-    description: 'Buzzer sounds only when BOTH buttons are pressed (AND logic).',
+    id: 'mixed-and-transistor-driver',
+    title: 'Mixed: MCU + AND gate + transistor (coexistence test)',
+    description:
+      'Coexistence of digital and analog in ONE circuit: the Arduino drives two ' +
+      'logic levels (one steady HIGH "enable", one blinking), a physical AND gate ' +
+      'combines them, and the AND output switches an NPN transistor that drives the ' +
+      '"motor" LED. The LED should blink — proving MCU -> logic gate -> transistor ' +
+      '-> load works through the digital and analog (ngspice) motors together.',
     category: 'circuits',
-    difficulty: 'beginner',
-    code: `// AND gate alarm — MCU buffers buttons, physical AND gate drives LED
-void setup() {
-  pinMode(2, INPUT_PULLUP); pinMode(3, INPUT_PULLUP);
-  pinMode(5, OUTPUT);       pinMode(6, OUTPUT);
-}
+    difficulty: 'intermediate',
+    code: `// MCU + AND gate + transistor coexistence.
+// pin 5 = steady enable, pin 6 = blink. AND(5,6) -> transistor -> motor LED.
+void setup() { pinMode(5, OUTPUT); pinMode(6, OUTPUT); }
 void loop() {
-  digitalWrite(5, !digitalRead(2)); // HIGH when btn1 pressed
-  digitalWrite(6, !digitalRead(3)); // HIGH when btn2 pressed
+  digitalWrite(5, HIGH);                 // enable
+  digitalWrite(6, (millis() / 500) & 1); // ~1 Hz blink
 }`,
     components: [
       UNO,
-      { type: 'wokwi-pushbutton', id: 'btn1', x: 260, y: 80, properties: {} },
-      { type: 'wokwi-pushbutton', id: 'btn2', x: 260, y: 180, properties: {} },
-      { type: 'velxio-logic-gate-and', id: 'u1', x: 400, y: 130, properties: {} },
-      { type: 'wokwi-resistor', id: 'rl', x: 520, y: 60, properties: { value: '220' } },
-      { type: 'wokwi-led', id: 'led1', x: 520, y: 160, properties: { color: 'red' } },
+      { type: 'velxio-logic-gate-and', id: 'u1', x: 360, y: 120, properties: {} },
+      { type: 'wokwi-resistor', id: 'rb', x: 480, y: 130, properties: { value: '1000' } },
+      { type: 'wokwi-bjt-2n2222', id: 'q1', x: 580, y: 160, properties: {} },
+      { type: 'wokwi-resistor', id: 'rl', x: 560, y: 40, properties: { value: '220' } },
+      { type: 'wokwi-led', id: 'motor', x: 560, y: 100, properties: { color: 'green' } },
     ],
     wires: [
-      // Buttons → MCU inputs (pin 2 / 3)
-      w('w1', ['arduino-uno', '2'], ['btn1', '1.l']),
-      w('w2', ['btn1', '2.l'], ['arduino-uno', 'GND'], '#000000'),
-      w('w3', ['arduino-uno', '3'], ['btn2', '1.l']),
-      w('w4', ['btn2', '2.l'], ['arduino-uno', 'GND'], '#000000'),
-      // MCU output pins drive gate inputs
-      w('w5', ['arduino-uno', '5'], ['u1', 'A']),
-      w('w6', ['arduino-uno', '6'], ['u1', 'B']),
-      // Gate Y → Rl → LED → GND
-      w('w7', ['u1', 'Y'], ['rl', '1']),
-      w('w8', ['rl', '2'], ['led1', 'A']),
-      w('w9', ['led1', 'C'], ['arduino-uno', 'GND'], '#000000'),
+      // MCU drives the two AND inputs
+      w('w1', ['arduino-uno', '5'], ['u1', 'A']),
+      w('w2', ['arduino-uno', '6'], ['u1', 'B']),
+      // AND output -> base resistor -> transistor base
+      w('w3', ['u1', 'Y'], ['rb', '1']),
+      w('w4', ['rb', '2'], ['q1', 'B']),
+      // Load: 5V -> Rl -> LED -> collector ; emitter -> GND
+      w('w5', ['arduino-uno', '5V'], ['rl', '1'], '#ff3030'),
+      w('w6', ['rl', '2'], ['motor', 'A']),
+      w('w7', ['motor', 'C'], ['q1', 'C']),
+      w('w8', ['q1', 'E'], ['arduino-uno', 'GND'], '#000000'),
+    ],
+  },
+
+  {
+    id: 'and-gate-alarm',
+    title: 'AND Gate Alarm',
+    description:
+      'Two arming switches feed an AND gate — the alarm LED lights ONLY when BOTH ' +
+      'are ON (e.g. both doors closed). They are slide switches, so they latch: ' +
+      'slide each one ON and it stays, so you can hold both at once. Pure logic, ' +
+      'no MCU — runs on the digital gate engine.',
+    category: 'circuits',
+    difficulty: 'beginner',
+    boardFilter: 'digital',
+    code: `// Pure digital circuit — no MCU. Slide BOTH switches ON to arm the alarm.
+void setup() {}
+void loop()  {}`,
+    components: [
+      { type: 'wokwi-signal-generator', id: 'src', x: 40, y: 200, properties: { waveform: 'dc', offset: 5, amplitude: 0, frequency: 1 } },
+      { type: 'wokwi-slide-switch', id: 'sw1', x: 220, y: 90, properties: { value: 0 } },
+      { type: 'wokwi-slide-switch', id: 'sw2', x: 220, y: 250, properties: { value: 0 } },
+      { type: 'wokwi-resistor', id: 'rpd1', x: 340, y: 140, properties: { value: '10000' } },
+      { type: 'wokwi-resistor', id: 'rpd2', x: 340, y: 300, properties: { value: '10000' } },
+      { type: 'velxio-logic-gate-and', id: 'u1', x: 470, y: 170, properties: {} },
+      { type: 'wokwi-resistor', id: 'rl', x: 620, y: 130, properties: { value: '220' } },
+      { type: 'wokwi-led', id: 'led1', x: 620, y: 220, properties: { color: 'red' } },
+    ],
+    wires: [
+      // Switch 1 → AND input A (slide ON = rail HIGH; pull-down holds it LOW when OFF)
+      w('w1', ['src', 'SIG'], ['sw1', '1'], '#ff3030'),
+      w('w2', ['sw1', '2'], ['u1', 'A']),
+      w('w3', ['sw1', '2'], ['rpd1', '1']),
+      w('w4', ['rpd1', '2'], ['src', 'GND'], '#000000'),
+      // Switch 2 → AND input B
+      w('w5', ['src', 'SIG'], ['sw2', '1'], '#ff3030'),
+      w('w6', ['sw2', '2'], ['u1', 'B']),
+      w('w7', ['sw2', '2'], ['rpd2', '1']),
+      w('w8', ['rpd2', '2'], ['src', 'GND'], '#000000'),
+      // AND output → series resistor → alarm LED → GND
+      w('w9', ['u1', 'Y'], ['rl', '1']),
+      w('w10', ['rl', '2'], ['led1', 'A']),
+      w('w11', ['led1', 'C'], ['src', 'GND'], '#000000'),
     ],
   },
 

@@ -55,6 +55,9 @@ export const ProjectByIdPage: React.FC = () => {
     getProjectById(id)
       .then((project) => {
         const payload = buildLoadPayload(project);
+        // Per-board manifests ride in boards_json (buildLoadPayload migrates
+        // pre-per-board projects), so loadProjectState restores each board's
+        // compile scope directly.
         loadProjectState(payload);
         setCurrentProject({
           id: project.id,
@@ -137,6 +140,7 @@ interface RawProject {
   files: { name: string; content: string }[];
   file_groups?: { groupId: string; files: { name: string; content: string }[] }[];
   boards_json?: string;
+  libraries_json?: string; // P2.4 — declared library manifest (compile scope)
   code: string;
   components_json: string;
   wires_json: string;
@@ -167,6 +171,8 @@ export function buildLoadPayload(project: RawProject) {
         // pre-feature projects; the compiler falls back to its defaults.
         boardOptions: b.boardOptions,
         spiffsFiles: b.spiffsFiles,
+        // P2.4 — this board's declared manifest (per-board compile scope).
+        libraries: b.libraries,
       }));
     }
   } catch {
@@ -190,6 +196,20 @@ export function buildLoadPayload(project: RawProject) {
         languageMode: 'arduino',
       },
     ];
+  }
+
+  // P2.4 migration — projects saved before per-board manifests stored a single
+  // project-level manifest (libraries_json). If no board carries its own, seed
+  // every board with the project union so it keeps compiling scoped.
+  if (!boards.some((b) => b.libraries && b.libraries.length)) {
+    try {
+      const union = JSON.parse(project.libraries_json || '[]');
+      if (Array.isArray(union) && union.length) {
+        for (const b of boards) b.libraries = union as string[];
+      }
+    } catch {
+      // ignore
+    }
   }
 
   // File groups
@@ -230,6 +250,9 @@ export function buildLoadPayload(project: RawProject) {
     wires = [];
   }
 
+  // Per-board library manifests ride inside each board (boards_json) and were
+  // migrated above for pre-per-board projects, so loadProjectState restores the
+  // compile scope along with the boards — no separate step needed.
   return {
     boards,
     fileGroups,

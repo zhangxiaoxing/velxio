@@ -16,6 +16,10 @@ export interface SketchFile {
 export interface CompileExtras {
   boardOptions?: ESP32BoardOptions;
   spiffsFiles?: SpiffsFile[];
+  // P2.3 — declared library manifest (the loaded example/project's libraries).
+  // Sent as the ESP-IDF resolution SCOPE; null/omitted = legacy scan-all.
+  // Ignored by the backend for non-ESP32 (arduino-cli) boards.
+  libraries?: string[] | null;
 }
 
 export interface CompileResult {
@@ -95,6 +99,8 @@ export async function compileCode(
   const spiffs_files = extras?.spiffsFiles?.length
     ? extras.spiffsFiles.map((f) => ({ name: f.name, content_b64: f.contentB64 }))
     : null;
+  // P2.3 — library manifest (resolution scope). null = legacy scan-all.
+  const libraries = extras?.libraries && extras.libraries.length ? extras.libraries : null;
 
   let jobId: string;
   try {
@@ -106,6 +112,7 @@ export async function compileCode(
         project_id: projectId ?? null,
         board_options,
         spiffs_files,
+        libraries,
       },
       { withCredentials: true, timeout: 30000 },
     );

@@ -117,6 +117,20 @@ RUN git clone --branch 2.0.17 --depth=1 --recursive --shallow-submodules \
     https://github.com/espressif/arduino-esp32.git /opt/arduino-esp32 \
  && rm -rf /opt/arduino-esp32/.git
 
+# mkspiffs (arduino-esp32 0.2.3 flavor) — bakes uploaded files into the SPIFFS
+# data-partition image at compile time. Without it espidf_compiler._build_spiffs_image
+# silently returns None and ships a blank SPIFFS region, so SPIFFS.begin() fails and
+# auto-formats and user-uploaded files never appear (GH #162). Installed at the exact
+# path the runtime locates via IDF_TOOLS_PATH (tools/mkspiffs/*/mkspiffs/mkspiffs).
+RUN mkdir -p /root/.espressif/tools/mkspiffs/0.2.3/mkspiffs \
+ && wget -qO /tmp/mkspiffs.tgz \
+      https://github.com/igrr/mkspiffs/releases/download/0.2.3/mkspiffs-0.2.3-arduino-esp32-linux64.tar.gz \
+ && tar -xzf /tmp/mkspiffs.tgz -C /tmp \
+ && cp /tmp/mkspiffs-0.2.3-arduino-esp32-linux64/mkspiffs \
+       /root/.espressif/tools/mkspiffs/0.2.3/mkspiffs/mkspiffs \
+ && chmod +x /root/.espressif/tools/mkspiffs/0.2.3/mkspiffs/mkspiffs \
+ && rm -rf /tmp/mkspiffs.tgz /tmp/mkspiffs-0.2.3-arduino-esp32-linux64
+
 
 # ---- Stage 1: Build frontend and third-party ----
 FROM node:20 AS frontend-builder

@@ -966,6 +966,15 @@ static void on_int(void* user_data, vx_pin pin, int value) {
 
 static void on_clock(void* user_data) {
     (void)user_data;
+    /* RESET̅ is level-sensitive on real silicon. on_reset() reinitialises the
+       core on the falling edge, but if the releasing RISING edge arrived before
+       this chip registered its watch — which happens on a multi-chip async
+       load, where a power-on-reset generator can drive RESET̅ high before the
+       (larger, slower-loading) CPU's watch is live — that one edge is lost and
+       the CPU would stay in reset forever. Sample the level here so a missed
+       edge self-corrects. An undriven RESET̅ resolves to Z and reads low, so the
+       CPU safely stays in reset until something actually drives it high. */
+    if (G.reset_active && vx_pin_read(G.reset_) != 0) G.reset_active = false;
     if (G.reset_active) return;
     if (vx_pin_read(G.busreq) == 0) {
         vx_pin_write(G.busack, 0);

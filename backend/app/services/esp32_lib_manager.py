@@ -227,6 +227,7 @@ class EspLibManager:
         sensors:      list | None = None,
         wifi_enabled: bool = False,
         wifi_hostfwd_port: int = 0,
+        sd_card: dict | None = None,
     ) -> None:
         # Stop any existing instance for this client_id first
         if client_id in self._instances:
@@ -246,6 +247,7 @@ class EspLibManager:
             'sensors':           sensors or [],
             'wifi_enabled':      wifi_enabled,
             'wifi_hostfwd_port': wifi_hostfwd_port,
+            **({'sd_card': sd_card} if sd_card else {}),
         })
 
         logger.info('Launching esp32_worker for %s (machine=%s, script=%s, python=%s)',

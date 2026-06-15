@@ -302,8 +302,14 @@ export const AboutPage: React.FC = () => {
         <div className="about-container">
           <h2 className="about-heading">{t('about.releases.heading')}</h2>
           <div className="about-releases">
-            <Link to={localize('/v2-5')} className="about-release-card about-release-card-latest">
+            <Link to={localize('/v3')} className="about-release-card about-release-card-latest">
               <span className="about-release-tag">{t('about.releases.latest')}</span>
+              <h3>Velxio 3.0</h3>
+              <p className="about-release-tagline">{t('about.releases.v3Tagline')}</p>
+              <p className="about-release-blurb">{t('about.releases.v3Blurb')}</p>
+              <span className="about-release-link">{t('about.releases.readNotes')}</span>
+            </Link>
+            <Link to={localize('/v2-5')} className="about-release-card">
               <h3>Velxio 2.5</h3>
               <p className="about-release-tagline">{t('about.releases.v25Tagline')}</p>
               <p className="about-release-blurb">{t('about.releases.v25Blurb')}</p>
@@ -349,11 +355,11 @@ export const AboutPage: React.FC = () => {
               <span className="about-stat-label">{t('about.community.stats.countries')}</span>
             </div>
             <div className="about-stat">
-              <span className="about-stat-number">17</span>
+              <span className="about-stat-number">19+</span>
               <span className="about-stat-label">{t('about.community.stats.supportedBoards')}</span>
             </div>
             <div className="about-stat">
-              <span className="about-stat-number">6</span>
+              <span className="about-stat-number">10+</span>
               <span className="about-stat-label">{t('about.community.stats.cpuArchitectures')}</span>
             </div>
           </div>

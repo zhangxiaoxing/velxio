@@ -32,6 +32,8 @@ export interface InstalledLibrary {
   version?: string;
   author?: string;
   sentence?: string;
+  /** P2.2c — true for the user's own per-user custom uploads (vs shared index libs). */
+  custom?: boolean;
 }
 
 export async function searchLibraries(query: string): Promise<ArduinoLibrary[]> {
@@ -72,6 +74,42 @@ export async function getInstalledLibraries(): Promise<InstalledLibrary[]> {
   }
   const data = await res.json();
   return data.libraries || [];
+}
+
+/**
+ * P2.2c — the signed-in user's per-user CUSTOM libraries (uploaded .zip),
+ * which live in their per-user store, not the shared global list. Merged into
+ * the Installed view + velxio.json autocomplete so they can see and reuse their
+ * uploads. Returns [] when unauthenticated or no pro overlay (401/404).
+ */
+export async function getCustomLibraries(): Promise<InstalledLibrary[]> {
+  try {
+    const res = await fetch('/api/pro/libraries/custom', { credentials: 'include' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+/** P2.2c — remove one of the user's own custom uploads (per-user store). */
+export async function deleteCustomLibrary(
+  name: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/pro/libraries/custom/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to remove' }));
+      return { success: false, error: err.detail || 'Failed to remove' };
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'network error' };
+  }
 }
 
 /**

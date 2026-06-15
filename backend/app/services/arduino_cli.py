@@ -2,7 +2,25 @@ import subprocess
 import tempfile
 import asyncio
 import base64
+import shutil
+import re
+import os
 from pathlib import Path
+
+from app.core.hooks import materialize_library_scope
+
+
+# A preprocessor "fatal error: Foo.h: No such file or directory" — the signature
+# of a missing #include. Used to decide whether a FAILED manifest-scoped compile
+# should retry scan-all (the manifest omitted a needed / transitive library) vs
+# surface the failure as-is (a genuine source error).
+_MISSING_HEADER_RE = re.compile(
+    r"fatal error:\s*\S+\.h(?:pp)?:\s*No such file or directory", re.IGNORECASE
+)
+
+
+def _looks_like_missing_header(stderr: str | None) -> bool:
+    return bool(stderr and _MISSING_HEADER_RE.search(stderr))
 
 
 class ArduinoCLIService:
@@ -250,6 +268,8 @@ class ArduinoCLIService:
         files: list[dict],
         board_fqbn: str = "arduino:avr:uno",
         board_options: dict | None = None,
+        allowed_libraries: set[str] | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         """
         Compile Arduino sketch using arduino-cli.
@@ -263,6 +283,15 @@ class ArduinoCLIService:
         (ESP32 partition/PSRAM/etc selectors live in the UI). It is currently
         ignored — AVR / RP2040 / ATTiny toolchains don't expose those knobs.
         Reserved for future per-board options on those families.
+
+        `allowed_libraries` is the per-board manifest = library resolution SCOPE
+        (P2.1f). When set, ONLY those libraries are made visible to arduino-cli
+        (a throwaway scratch sketchbook of symlinks materialized by the pro
+        overlay from the content-addressed cache / owner store, pointed at via
+        ARDUINO_DIRECTORIES_USER), instead of the shared global volume.
+        `owner_id` is the project OWNER's id so a shared / embed compile resolves
+        that owner's custom libraries. None/empty manifest (or no overlay) ->
+        arduino-cli's default sketchbook -> scan-all (legacy parity).
 
         Returns:
             dict with keys: success, hex_content, stdout, stderr, error
@@ -307,7 +336,41 @@ class ArduinoCLIService:
             build_dir.mkdir()
             print(f"Build directory: {build_dir}")
 
+            # P2.1f — manifest-scoped library resolution. Symlink ONLY the
+            # declared libraries (resolved owner-store -> content-addressed
+            # cache -> legacy global dir) into a throwaway scratch sketchbook and
+            # point arduino-cli's USER directory at it, so it scans ONLY those
+            # libraries instead of the shared mutable global volume. None/empty
+            # manifest (or no pro overlay) -> no override -> arduino-cli's default
+            # sketchbook -> legacy global scan-all (parity).
+            #
+            # Mechanism: ARDUINO_DIRECTORIES_USER (the sketchbook), NOT the
+            # --libraries flag. Verified empirically that `--libraries` ADDS to
+            # the search path (the global sketchbook is STILL scanned, so it does
+            # not isolate), whereas pointing ARDUINO_DIRECTORIES_USER at the
+            # scratch root makes <scratch>/libraries the ONLY user-library dir.
+            # scope_dir == <scratch>/libraries, so its parent is the sketchbook
+            # root. Cores + board-manager URLs live in the DATA dir and are
+            # untouched, so RP2040 / ATTinyCore / AVR core resolution stays intact.
+            scope_dir = None
             try:
+                scope = materialize_library_scope(allowed_libraries, owner_id)
+                scope_dir = scope[0] if scope else None
+                compile_env = dict(os.environ)
+                if scope_dir is not None:
+                    compile_env["ARDUINO_DIRECTORIES_USER"] = str(scope_dir.parent)
+                else:
+                    # P2.1h: NO manifest -> point the default sketchbook at the
+                    # content-addressed cache (VELXIO_FALLBACK_SKETCHBOOK, whose
+                    # libraries/ is the cache root) instead of the shared global
+                    # volume, so a from-scratch / no-manifest compile (and the
+                    # scan-all retry, which re-enters here unscoped) resolves user
+                    # libraries from the cache. Unset (OSS self-host) -> arduino-
+                    # cli's default sketchbook (legacy global volume).
+                    _fb = os.environ.get("VELXIO_FALLBACK_SKETCHBOOK")
+                    if _fb:
+                        compile_env["ARDUINO_DIRECTORIES_USER"] = _fb
+
                 # Run compilation using subprocess.run in a thread (Windows compatible)
                 # ESP32 lcgamboa emulator requires DIO flash mode and
                 # IRAM-safe interrupt placement to avoid cache errors.
@@ -343,7 +406,8 @@ class ArduinoCLIService:
                     return subprocess.run(
                         cmd,
                         capture_output=True,
-                        text=True
+                        text=True,
+                        env=compile_env,
                     )
 
                 result = await asyncio.to_thread(run_compile)
@@ -496,6 +560,25 @@ class ArduinoCLIService:
                             }
                 else:
                     print("=== Compilation failed ===\n")
+                    # P2.1f graceful fallback (mirrors the ESP-IDF path): a
+                    # manifest-scoped compile points ARDUINO_DIRECTORIES_USER at
+                    # a sketchbook holding ONLY the declared libraries, so the
+                    # global volume is not scanned. If the manifest omitted a
+                    # needed library or a transitive dependency, a header goes
+                    # missing and the build hard-fails where the legacy global
+                    # scan-all would have found it. So when a scope was applied
+                    # and the failure is a missing #include, retry ONCE without
+                    # the scope (global scan-all) and flag the manifest as
+                    # incomplete. A genuine source error fails both attempts and
+                    # returns the original scoped failure below.
+                    if scope_dir is not None and _looks_like_missing_header(result.stderr):
+                        print("=== Incomplete manifest — retrying scan-all ===\n")
+                        retry = await self.compile(
+                            files, board_fqbn, board_options=board_options,
+                        )  # allowed_libraries=None -> no scope -> no further retry
+                        if retry.get("success"):
+                            retry["manifest_incomplete"] = True
+                            return retry
                     return {
                         "success": False,
                         "error": "Compilation failed",
@@ -513,6 +596,11 @@ class ArduinoCLIService:
                     "stdout": "",
                     "stderr": ""
                 }
+            finally:
+                if scope_dir is not None:
+                    # rmtree unlinks the symlinks, never their cache / store /
+                    # legacy targets.
+                    shutil.rmtree(scope_dir.parent, ignore_errors=True)
 
     async def list_boards(self) -> list:
         """
@@ -783,13 +871,24 @@ class ArduinoCLIService:
 
     async def list_installed_libraries(self) -> dict:
         """
-        List all installed Arduino libraries
+        List all installed Arduino libraries.
+
+        P2.1h: when VELXIO_FALLBACK_SKETCHBOOK is set (pro overlay), list the
+        content-addressed cache (its libraries/ is the cache root) instead of the
+        shared global volume, so the Library Manager 'Installed' view survives the
+        global volume's retirement. Unset (OSS) -> arduino-cli's default sketchbook.
         """
         try:
+            list_env = dict(os.environ)
+            _fb = os.environ.get("VELXIO_FALLBACK_SKETCHBOOK")
+            if _fb:
+                list_env["ARDUINO_DIRECTORIES_USER"] = _fb
+
             def _run():
                 return subprocess.run(
                     [self.cli_path, "lib", "list", "--format", "json"],
-                    capture_output=True, text=True, encoding='utf-8', errors='replace'
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    env=list_env,
                 )
 
             result = await asyncio.to_thread(_run)

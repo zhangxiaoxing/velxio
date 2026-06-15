@@ -27,6 +27,7 @@ import { RaspberryPiPicoSimulatorPage } from './pages/RaspberryPiPicoSimulatorPa
 import { RaspberryPiSimulatorPage } from './pages/RaspberryPiSimulatorPage';
 import { Velxio2Page } from './pages/Velxio2Page';
 import { Velxio25Page } from './pages/Velxio25Page';
+import { Velxio3Page } from './pages/Velxio3Page';
 import { AboutPage } from './pages/AboutPage';
 import { PricingPlaceholder } from './pages/PricingPlaceholder';
 import { LocaleSync } from './i18n/LocaleSync';
@@ -81,6 +82,7 @@ const ROUTES: { path: string; element: ReactElement; index?: boolean }[] = [
   { path: 'raspberry-pi-simulator', element: <RaspberryPiSimulatorPage /> },
   { path: 'v2', element: <Velxio2Page /> },
   { path: 'v2-5', element: <Velxio25Page /> },
+  { path: 'v3', element: <Velxio3Page /> },
   { path: 'about', element: <AboutPage /> },
   // Pricing — placeholder by default; private overlays portal-inject the real page
   { path: 'pricing', element: <PricingPlaceholder /> },

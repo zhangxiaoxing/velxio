@@ -7,6 +7,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { getTabSessionId } from '../../simulation/Esp32Bridge';
+import { openDeviceGateway } from '../../lib/openDeviceGateway';
 import type { BoardKind } from '../../types/board';
 import { boardDisplayName } from '../../types/board';
 
@@ -261,7 +262,10 @@ export const SerialMonitor: React.FC = () => {
               // Strip them before any further processing — color isn't
               // worth a full parser here.
               const text = activeBoard.serialOutput.replace(/\x1b\[[0-9;]*m/g, '');
-              const ipRegex = /http:\/\/192\.168\.4\.(\d+)(\/[^\s]*)?/g;
+              // ESP32 (QEMU slirp) hands out 192.168.4.x; the Pico W virtual
+              // net hands out 10.13.37.x. Both reach their emulated server
+              // through the same /api/gateway proxy, so linkify either subnet.
+              const ipRegex = /http:\/\/(?:192\.168\.4|10\.13\.37)\.(\d+)(\/[^\s]*)?/g;
               const matches = [...text.matchAll(ipRegex)];
 
               if (matches.length > 0) {
@@ -280,12 +284,23 @@ export const SerialMonitor: React.FC = () => {
                   const gatewayUrl = `${backendBase}/gateway/${clientId}${path}`;
 
                   parts.push(text.slice(lastIdx, start));
+                  const isPicoW = activeBoard.boardKind === 'pi-pico-w';
                   parts.push(
                     <a
                       key={i}
                       href={gatewayUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={
+                        isPicoW
+                          ? (e) => {
+                              // Pico W runs in this tab; a new tab freezes the
+                              // emulation. Show the page in an in-app iframe.
+                              e.preventDefault();
+                              openDeviceGateway(gatewayUrl);
+                            }
+                          : undefined
+                      }
                       style={{
                         color: '#4fc3f7',
                         textDecoration: 'underline',

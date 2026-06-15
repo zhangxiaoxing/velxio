@@ -44,7 +44,27 @@ function serialisableBoard(b: BoardInstance) {
     // inside boards_json so there's no DB migration.
     boardOptions: b.boardOptions,
     spiffsFiles: b.spiffsFiles,
+    // P2.4 — this board's declared library manifest (compile scope). Rides in
+    // boards_json so it round-trips, dirty-checks and autosaves for free.
+    libraries: b.libraries,
   };
+}
+
+/** Union of every board's declared library manifest, sorted + de-duped.
+ *  Persisted as the project-level `libraries_json` for backward-compat readers
+ *  and as the backend's fallback scope when a client sends no per-board list. */
+function unionBoardLibraries(boards: BoardInstance[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const b of boards) {
+    for (const lib of b.libraries ?? []) {
+      if (!seen.has(lib)) {
+        seen.add(lib);
+        out.push(lib);
+      }
+    }
+  }
+  return out.sort();
 }
 
 interface SnapshotInputs {
@@ -96,6 +116,13 @@ export function buildSavePayload(meta: SnapshotInputs = {}): ProjectSaveData {
   }));
   const fileGroups = [...boardGroups, ...chipGroups];
 
+  // P2.4 — per-board manifests live inside boards_json (serialisableBoard).
+  // The project-level libraries_json is their UNION: kept for backward-compat
+  // readers and as the backend's fallback compile scope when a client sends no
+  // per-board list. Always sent (no clobber risk: boards_json is the source of
+  // truth and round-trips natively, so the union is always recomputable).
+  const unionLibs = unionBoardLibraries(sim.boards);
+
   return {
     name: meta.name ?? '',
     description: meta.description,
@@ -107,6 +134,7 @@ export function buildSavePayload(meta: SnapshotInputs = {}): ProjectSaveData {
     components_json: JSON.stringify(sim.components),
     wires_json: JSON.stringify(sim.wires),
     boards_json: JSON.stringify(sim.boards.map(serialisableBoard)),
+    libraries_json: JSON.stringify(unionLibs),
   };
 }
 
@@ -143,6 +171,8 @@ export function computeProjectStateHash(): string {
   }));
 
   const payload = {
+    // boards carry their per-board `libraries` via serialisableBoard, so
+    // declaring/removing a library marks the project dirty and autosaves.
     boards: sim.boards.map(serialisableBoard),
     activeId: sim.activeBoardId,
     components: sim.components,

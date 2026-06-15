@@ -90,6 +90,18 @@ except ImportError:
     _Uc8159cEpaperSlave = _mod.Uc8159cEpaperSlave  # type: ignore[assignment]
     _Uc8179EpaperSlave = _mod.Uc8179EpaperSlave  # type: ignore[assignment]
 
+# microSD SD-over-SPI slave (synchronous, returns MISO per byte). Same fallback.
+try:
+    from app.services.esp32_sd_slave import SdSpiSlave as _SdSpiSlave
+except ImportError:
+    import importlib.util as _ilu_sd, pathlib as _pl_sd, sys as _sys_sd
+    _spec_sd = _ilu_sd.spec_from_file_location(
+        'esp32_sd_slave', _pl_sd.Path(__file__).parent / 'esp32_sd_slave.py')
+    _mod_sd = _ilu_sd.module_from_spec(_spec_sd)  # type: ignore[arg-type]
+    _sys_sd.modules['esp32_sd_slave'] = _mod_sd
+    _spec_sd.loader.exec_module(_mod_sd)  # type: ignore[union-attr]
+    _SdSpiSlave = _mod_sd.SdSpiSlave  # type: ignore[assignment]
+
 # ─── stdout helpers ──────────────────────────────────────────────────────────
 
 _stdout_lock = threading.Lock()
@@ -241,6 +253,19 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
     initial_sensors   = cfg.get('sensors', [])
     wifi_enabled      = cfg.get('wifi_enabled', False)
     wifi_hostfwd_port = cfg.get('wifi_hostfwd_port', 0)
+    sd_card_cfg       = cfg.get('sd_card')  # {'image_b64': ...} when a microSD is wired
+
+    # microSD card (SD-over-SPI). The frontend builds a FAT16 image (auto-copied
+    # project files + paid uploads) and ships it here; SdSpiSlave serves it
+    # synchronously over the SPI bus (returns MISO per byte). Single-device on
+    # the bus for now — CS gating is a later refinement.
+    _sd_slave = None
+    if sd_card_cfg and sd_card_cfg.get('image_b64'):
+        try:
+            _sd_slave = _SdSpiSlave(base64.b64decode(sd_card_cfg['image_b64']))
+            _log('[sd] microSD attached')
+        except Exception as _e:  # noqa: BLE001
+            _log(f'[sd] failed to attach microSD: {_e!r}')
 
     # Adjust GPIO pinmap based on chip: ESP32-C3 has only 22 GPIOs
     if 'c3' in machine:
@@ -1109,6 +1134,13 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                         _log(f'[epaper spi_event] error: {e!r}')
             if any_active:
                 return 0xFF
+        # microSD — serve SD-over-SPI synchronously, returning the card's MISO
+        # for this byte (the read path the firmware polls).
+        if _sd_slave is not None and op == 0x00:
+            try:
+                return _sd_slave.transfer(mosi) & 0xFF
+            except Exception as e:
+                _log(f'[sd spi_event] error: {e!r}')
         resp = _spi_response[0]
         if _stopped.is_set():
             return resp
@@ -1169,6 +1201,15 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
                             _log(f'[epaper spi_batch] error: {e!r}')
             if any_active:
                 return
+        # microSD — capture bulk write-only data (e.g. the 512-byte block sent
+        # after CMD24). MISO is discarded on this path; the slave still advances.
+        if _sd_slave is not None:
+            try:
+                for mb in data:
+                    _sd_slave.feed(mb)
+            except Exception as e:
+                _log(f'[sd spi_batch] error: {e!r}')
+            return
         # Fast path: bulk-append to the spi_batch buffer (same buffer/flush the
         # per-byte path uses, so frontend ordering is unchanged).
         with _spi_buf_lock:

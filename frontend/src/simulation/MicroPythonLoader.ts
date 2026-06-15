@@ -16,9 +16,7 @@ import littlefsWasmUrl from 'littlefs/dist/littlefs.wasm?url';
 
 // Flash geometry (matches rp2040js and MicroPython defaults)
 const FLASH_START_ADDRESS = 0x10000000;
-const MICROPYTHON_FS_FLASH_START = 0xa0000;
 const MICROPYTHON_FS_BLOCK_SIZE = 4096;
-const MICROPYTHON_FS_BLOCK_COUNT = 352;
 
 // UF2 block constants
 const UF2_MAGIC_START0 = 0x0a324655;
@@ -28,15 +26,57 @@ const UF2_PAYLOAD_SIZE = 256;
 const UF2_DATA_OFFSET = 32;
 const UF2_ADDR_OFFSET = 12;
 
-// Firmware cache key for IndexedDB
-const FIRMWARE_CACHE_KEY = 'micropython-rp2040-uf2-v1.20.0';
+/**
+ * MicroPython firmware variant. RP2040 boards split into the plain Raspberry
+ * Pi Pico and the Pico W. The W build is larger because it embeds the CYW43439
+ * WiFi driver + blob and the `network`/`socket`/`ssl` modules the plain build
+ * omits, which also pushes its LittleFS filesystem to a higher flash offset.
+ * Loading the plain firmware onto a Pico W board is what produced
+ * "ImportError: no module named 'network'" on every WiFi/MQTT example.
+ */
+// 'pico' is the only variant the OSS build ships. Extra variants (e.g. the W
+// build with CYW43/network, a paid pro feature) are added at runtime via
+// registerFirmwareVariant(), so this is a plain string.
+export type FirmwareVariant = string;
 
-// Bundled fallback path (placed in public/firmware/)
-const FIRMWARE_FALLBACK_PATH = '/firmware/micropython-rp2040.uf2';
+export interface FirmwareConfig {
+  /** IndexedDB cache key — MUST differ per variant or the two builds collide. */
+  cacheKey: string;
+  remoteUrl: string;
+  /** Bundled fallback served from public/firmware/. */
+  fallbackPath: string;
+  /** Flash offset of the MicroPython LittleFS region (board-specific). */
+  fsFlashStart: number;
+  /** Number of 4K blocks in the LittleFS region. */
+  fsBlockCount: number;
+}
 
-// Remote firmware URL
-const FIRMWARE_REMOTE_URL =
-  'https://micropython.org/resources/firmware/RPI_PICO-20230426-v1.20.0.uf2';
+// Geometry mirrors MicroPython rp2 v1.20.0 board configs:
+//   PICO : MICROPY_HW_FLASH_STORAGE_BYTES = 1408K -> FS @ 0x200000-0x160000 = 0xa0000 (352 blocks)
+// OSS ships only the plain Pico build. The Pico W variant (CYW43 + network, a
+// paid feature) is registered at runtime by the pro overlay via
+// registerFirmwareVariant('pico-w', ...) — see pro/.../cyw43/installCyw43.ts.
+const FIRMWARE_CONFIGS: Record<string, FirmwareConfig> = {
+  pico: {
+    cacheKey: 'micropython-rp2040-uf2-v1.20.0',
+    remoteUrl: 'https://micropython.org/resources/firmware/RPI_PICO-20230426-v1.20.0.uf2',
+    fallbackPath: '/firmware/micropython-rp2040.uf2',
+    fsFlashStart: 0xa0000,
+    fsBlockCount: 352,
+  },
+};
+
+/** Register an extra firmware variant at runtime (e.g. the pro overlay adds
+ *  the RPI_PICO_W build). Idempotent — re-registering replaces. */
+export function registerFirmwareVariant(name: string, cfg: FirmwareConfig): void {
+  FIRMWARE_CONFIGS[name] = cfg;
+}
+
+/** Resolve a variant config, falling back to the plain Pico build if a
+ *  variant was requested that isn't registered (defensive — never crash). */
+function firmwareConfig(variant: FirmwareVariant): FirmwareConfig {
+  return FIRMWARE_CONFIGS[variant] ?? FIRMWARE_CONFIGS.pico;
+}
 
 /**
  * Parse UF2 binary and write payload blocks into RP2040 flash.
@@ -72,9 +112,11 @@ export function loadUF2(uf2Data: Uint8Array, flash: Uint8Array): void {
 export async function loadUserFiles(
   files: Array<{ name: string; content: string }>,
   flash: Uint8Array,
+  variant: FirmwareVariant = 'pico',
 ): Promise<void> {
+  const { fsFlashStart, fsBlockCount } = firmwareConfig(variant);
   // Create a backing buffer for the LittleFS filesystem
-  const fsBuffer = new Uint8Array(MICROPYTHON_FS_BLOCK_COUNT * MICROPYTHON_FS_BLOCK_SIZE);
+  const fsBuffer = new Uint8Array(fsBlockCount * MICROPYTHON_FS_BLOCK_SIZE);
 
   // Initialize the littlefs WASM module.
   // locateFile redirects Emscripten's internal fetch to the Vite-resolved asset URL.
@@ -109,7 +151,7 @@ export async function loadUserFiles(
     flashProg,
     flashErase,
     flashSync,
-    MICROPYTHON_FS_BLOCK_COUNT,
+    fsBlockCount,
     MICROPYTHON_FS_BLOCK_SIZE,
   );
   const lfsInstance = lfs._new_lfs();
@@ -124,7 +166,13 @@ export async function loadUserFiles(
   for (const file of files) {
     const fileName = file.name;
     const content = file.content;
-    writeFile(lfsInstance, fileName, content, content.length);
+    // cwrap marshals `content` to the WASM heap as UTF-8, so the byte count we
+    // pass must be the UTF-8 length, NOT content.length (UTF-16 code units).
+    // A multi-byte char (e.g. an em-dash in a comment) makes UTF-8 longer, and
+    // passing the shorter content.length truncates the tail of the file —
+    // corrupting the final statement into a SyntaxError at EOF.
+    const byteLength = new TextEncoder().encode(content).length;
+    writeFile(lfsInstance, fileName, content, byteLength);
   }
 
   // Unmount and free
@@ -133,7 +181,7 @@ export async function loadUserFiles(
   lfs._free(config);
 
   // Copy the LittleFS image into RP2040 flash at the filesystem offset
-  flash.set(fsBuffer, MICROPYTHON_FS_FLASH_START);
+  flash.set(fsBuffer, fsFlashStart);
 }
 
 /**
@@ -141,13 +189,16 @@ export async function loadUserFiles(
  * Checks IndexedDB cache first, then tries remote download, then bundled fallback.
  */
 export async function getFirmware(
+  variant: FirmwareVariant = 'pico',
   onProgress?: (loaded: number, total: number) => void,
 ): Promise<Uint8Array> {
+  const { cacheKey, remoteUrl, fallbackPath } = firmwareConfig(variant);
+
   // 1. Check IndexedDB cache
   try {
-    const cached = await idbGet(FIRMWARE_CACHE_KEY);
+    const cached = await idbGet(cacheKey);
     if (cached instanceof Uint8Array && cached.length > 0) {
-      console.log('[MicroPython] Firmware loaded from cache');
+      console.log(`[MicroPython] Firmware (${variant}) loaded from cache`);
       return cached;
     }
   } catch {
@@ -156,7 +207,7 @@ export async function getFirmware(
 
   // 2. Try remote download
   try {
-    const response = await fetch(FIRMWARE_REMOTE_URL);
+    const response = await fetch(remoteUrl);
     if (response.ok) {
       const total = Number(response.headers.get('content-length') || 0);
       const reader = response.body?.getReader();
@@ -182,12 +233,12 @@ export async function getFirmware(
 
         // Cache for next time
         try {
-          await idbSet(FIRMWARE_CACHE_KEY, firmware);
+          await idbSet(cacheKey, firmware);
         } catch {
           // Cache write failure is non-fatal
         }
 
-        console.log(`[MicroPython] Firmware downloaded (${firmware.length} bytes)`);
+        console.log(`[MicroPython] Firmware (${variant}) downloaded (${firmware.length} bytes)`);
         return firmware;
       }
     }
@@ -196,20 +247,20 @@ export async function getFirmware(
   }
 
   // 3. Fallback to bundled firmware
-  const response = await fetch(FIRMWARE_FALLBACK_PATH);
+  const response = await fetch(fallbackPath);
   if (!response.ok) {
-    throw new Error('MicroPython firmware not available (remote and bundled both failed)');
+    throw new Error(`MicroPython firmware (${variant}) not available (remote and bundled both failed)`);
   }
   const buffer = await response.arrayBuffer();
   const firmware = new Uint8Array(buffer);
 
   // Cache for next time
   try {
-    await idbSet(FIRMWARE_CACHE_KEY, firmware);
+    await idbSet(cacheKey, firmware);
   } catch {
     // non-fatal
   }
 
-  console.log(`[MicroPython] Firmware loaded from bundled fallback (${firmware.length} bytes)`);
+  console.log(`[MicroPython] Firmware (${variant}) loaded from bundled fallback (${firmware.length} bytes)`);
   return firmware;
 }

@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
+from app.core.hooks import materialize_library_scope
+
 logger = logging.getLogger(__name__)
 
 # Location of the ESP-IDF project template (relative to this file)
@@ -169,78 +171,88 @@ def _run_with_streaming(
     )
 
 
+# How many distinct build variants to keep per target before LRU-evicting the
+# coldest. Each variant is a full ESP-IDF build tree (~240 MB). Distinct
+# variants = distinct (board options x resolved library set). The global ccache
+# means an evicted-then-rebuilt variant warms up in seconds.
+_MAX_BUILD_VARIANTS = 12
+
+
+def _evict_cold_variants(target_dir: Path, keep: int) -> None:
+    """LRU-evict variant dirs (``v_*``) beyond ``keep``, coldest mtime first."""
+    try:
+        variants = [
+            d for d in target_dir.iterdir()
+            if d.is_dir() and d.name.startswith('v_')
+        ]
+    except OSError:
+        return
+    if len(variants) <= keep:
+        return
+    variants.sort(key=lambda d: d.stat().st_mtime if d.exists() else 0.0)
+    for d in variants[:len(variants) - keep]:
+        logger.info(f'[espidf] LRU-evicting cold build variant {d.name}')
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _prepare_persistent_project_dir(
     idf_target: str,
-    options_hash: str = '',
+    variant_key: str = 'default',
 ) -> Path:
-    """Return the path to a per-target persistent project dir, materialising
-    it from the template on first use and resetting the per-compile parts
-    (main/, user_libs/) on every call so a previous sketch's files don't
-    leak into the next compile.
+    """Return a persistent project dir for (idf_target, variant_key), created
+    from the template on first use and with the per-compile parts (main/,
+    user_libs/) reset each call so a previous sketch doesn't leak into the next.
 
-    Keeps the `build/` directory intact across calls — that's where ninja's
-    incremental cache + the .o files we want ccache to hit live.
-
-    `options_hash` (12-char prefix of sha256 over normalised board options)
-    is stored in a second sentinel `.options_hash`. When the hash changes
-    between compiles, build/ is wiped so cached .o files compiled against
-    the previous sdkconfig don't poison the new config. The wider target
-    dir is preserved (template files, idf version sentinel) so we only pay
-    the C/C++ recompile cost, not the template re-copy.
+    Each distinct ``variant_key`` gets its OWN dir with its OWN ``build/`` that
+    is NEVER wiped/reconfigured for a different config. The caller folds the
+    board options AND the resolved library set into the key, so two compiles
+    that would produce a different ESP-IDF component graph never share a build/.
+    Sharing one build/ across configs caused intermittent cmake-configure
+    failures, stale-object false positives, and nested-build breakage (a wiped+
+    reconfigured dir loses ESP-IDF managed-component temp files). Same variant
+    -> same dir -> warm ninja incremental + ccache. Cold variant -> fresh build,
+    fast via the global ccache. The variant set is LRU-bounded per target.
     """
     target_dir = _BUILD_ROOT / idf_target
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # Wipe the whole target dir if the toolchain version changed (the cached
-    # .o files are no longer compatible).
+    # Wipe ALL variants for this target if the toolchain changed (cached .o
+    # files are no longer ABI-compatible).
     sentinel = target_dir / '.idf_version'
     current_signature = _idf_version_signature()
     if sentinel.exists() and sentinel.read_text(encoding='utf-8').strip() != current_signature:
-        logger.info(
-            f'[espidf] toolchain version changed; wiping persistent build dir {target_dir}'
-        )
-        shutil.rmtree(target_dir)
+        logger.info(f'[espidf] toolchain version changed; wiping {target_dir}')
+        shutil.rmtree(target_dir, ignore_errors=True)
         target_dir.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text(current_signature, encoding='utf-8')
 
-    project_dir = target_dir / 'project'
-    options_sentinel = target_dir / '.options_hash'
-    prior_options_hash = (
-        options_sentinel.read_text(encoding='utf-8').strip()
-        if options_sentinel.exists() else ''
-    )
+    # One-time cleanup of the pre-variant layout (target_dir/project) so it
+    # doesn't orphan ~240 MB after the upgrade to per-variant dirs.
+    legacy_project = target_dir / 'project'
+    if legacy_project.exists():
+        shutil.rmtree(legacy_project, ignore_errors=True)
+        (target_dir / '.options_hash').unlink(missing_ok=True)
+
+    safe = ''.join(c for c in variant_key if c.isalnum() or c in '-_')[:40] or 'default'
+    variant_dir = target_dir / ('v_' + safe)
+    project_dir = variant_dir / 'project'
 
     if not project_dir.exists():
-        # First use of this target — full template copy.
+        variant_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(_TEMPLATE_DIR, project_dir)
     else:
-        # Subsequent compile — reset the per-compile parts only, keep build/.
-        # main/ is overwritten with the user's sketch + any extra files.
-        # user_libs/ is rebuilt by _resolve_library_components based on the
-        # sketch's #includes.
+        # Reset per-compile parts only; keep build/ (warm for this variant).
         shutil.rmtree(project_dir / 'main', ignore_errors=True)
         shutil.copytree(_TEMPLATE_DIR / 'main', project_dir / 'main')
         shutil.rmtree(project_dir / 'user_libs', ignore_errors=True)
 
-        if options_hash and options_hash != prior_options_hash:
-            # First compile after this feature shipped: prior_options_hash is
-            # empty but the persistent build/ was compiled against the old
-            # static sdkconfig. Wipe it once to force a clean reconfigure
-            # against the templated config — otherwise stale .o files
-            # silently mask the new options.
-            reason = (
-                'first compile post-upgrade'
-                if not prior_options_hash
-                else f'changed {prior_options_hash!r} -> {options_hash!r}'
-            )
-            logger.info(
-                f'[espidf] board options {reason}; '
-                f'wiping build/ to force a full reconfigure'
-            )
-            shutil.rmtree(project_dir / 'build', ignore_errors=True)
+    # Mark this variant most-recently-used, then LRU-evict the coldest.
+    try:
+        os.utime(variant_dir, None)
+    except OSError:
+        pass
+    _evict_cold_variants(target_dir, keep=_MAX_BUILD_VARIANTS)
 
-    sentinel.write_text(current_signature, encoding='utf-8')
-    if options_hash:
-        options_sentinel.write_text(options_hash, encoding='utf-8')
     return project_dir
 
 # Static IP that matches slirp DHCP range (first client = x.x.x.15)
@@ -550,8 +562,19 @@ class ESPIDFCompiler:
         return '\n'.join(lines) + '\n'
 
     def _find_arduino_libraries_dir(self) -> Path | None:
-        """Find the Arduino global user-libraries directory (installed via arduino-cli)."""
-        candidates = [
+        """Find the Arduino global user-libraries directory (installed via arduino-cli).
+
+        P2.1h: when the pro overlay sets VELXIO_FALLBACK_LIBRARIES_DIR (the
+        content-addressed cache root, itself a valid libraries dir whose children
+        are library folders), prefer it — so the no-manifest scan + the scan-all
+        retry resolve from the cache instead of the shared global volume, letting
+        the global volume be retired. Unset (OSS self-host) -> legacy global.
+        """
+        candidates: list[Path] = []
+        _fb = os.environ.get('VELXIO_FALLBACK_LIBRARIES_DIR')
+        if _fb:
+            candidates.append(Path(_fb))
+        candidates += [
             Path.home() / 'Arduino' / 'libraries',
             Path.home() / 'Documents' / 'Arduino' / 'libraries',
             Path('/root/Arduino/libraries'),              # Docker / CI as root
@@ -630,6 +653,180 @@ class ESPIDFCompiler:
         'WiFiServer.h', 'WiFiType.h', 'esp_wifi.h',
     })
 
+    # arduino-esp32 uses a single library architecture id ("esp32") across
+    # every chip variant (esp32 / esp32c3 / esp32s3 ...). A library whose
+    # library.properties declares architectures= without "esp32" or "*" is
+    # built for another platform and must not be pulled into an ESP32 build.
+    _ESP32_LIB_ARCH = 'esp32'
+
+    def _core_provided_headers(self) -> frozenset[str]:
+        """Header filenames provided by the arduino-esp32 core itself
+        (its `cores/` tree plus every bundled library under `libraries/`).
+
+        These are compiled into the arduino-esp32 IDF component, so a user
+        library must NEVER shadow them — even when a lib installed in
+        ~/Arduino/libraries happens to ship a file by the same name. The
+        canonical break this guards against: `WiFiEspAT/src/WiFi.h` (an
+        ESP8266 AT-modem library) shadowing the core `WiFi.h`, which drags
+        `EspAtDrv.cpp` into the build where its `const char OK[]` /
+        `const char STATUS[]` collide with ESP-IDF's
+        `enum STATUS { ...OK... }` in rom/ets_sys.h and the compile fails.
+
+        Computed once from the core tree and cached. Always unions the
+        static `_CORE_ESP32_HEADERS` fallback so the guard still holds even
+        when the core path is unknown (e.g. translation-only mode).
+        """
+        cached = getattr(self, '_core_headers_cache', None)
+        if cached is not None:
+            return cached
+        headers: set[str] = set(self._CORE_ESP32_HEADERS)
+        root = Path(self.arduino_path) if self.arduino_path else None
+        if root and root.is_dir():
+            for sub in ('cores', 'libraries'):
+                base = root / sub
+                if not base.is_dir():
+                    continue
+                for pattern in ('*.h', '*.hpp'):
+                    for f in base.rglob(pattern):
+                        headers.add(f.name)
+        result = frozenset(headers)
+        self._core_headers_cache = result
+        logger.info('[espidf] core-provided header set: %d headers', len(result))
+        return result
+
+    @staticmethod
+    def _parse_library_properties(lib_root: Path) -> dict[str, str]:
+        """Best-effort parse of an Arduino library.properties into a dict."""
+        props: dict[str, str] = {}
+        try:
+            text = (lib_root / 'library.properties').read_text(
+                encoding='utf-8', errors='ignore'
+            )
+        except OSError:
+            return props
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            props[key.strip().lower()] = value.strip()
+        return props
+
+    def _library_supports_esp32(self, lib_root: Path) -> bool:
+        """True if the library may be used on the ESP32 platform.
+
+        A missing/empty `architectures` field means "all architectures"
+        (the Arduino default), so we allow it. Only libraries that
+        explicitly enumerate architectures WITHOUT esp32/* are rejected —
+        those are written for another platform and would not compile.
+        """
+        arch = self._parse_library_properties(lib_root).get('architectures', '').strip()
+        if not arch:
+            return True
+        arches = {a.strip().lower() for a in arch.split(',') if a.strip()}
+        return '*' in arches or self._ESP32_LIB_ARCH in arches
+
+    @staticmethod
+    def _norm_lib_name(name: str) -> str:
+        """Normalise a library name for manifest matching: lowercased, only
+        alphanumerics. So "Adafruit GFX Library", "Adafruit_GFX_Library" and
+        "adafruitgfxlibrary" all compare equal — the Library Manager display
+        name and the on-disk folder name differ only by separators/case."""
+        return ''.join(ch for ch in (name or '').lower() if ch.isalnum())
+
+    def _library_in_manifest(self, lib_root: Path, allowed_norm: set[str]) -> bool:
+        """True if this library is in the project's declared manifest.
+        Matches on the on-disk folder name OR the library.properties `name=`
+        (the Library Manager display name), both normalised."""
+        if self._norm_lib_name(lib_root.name) in allowed_norm:
+            return True
+        props_name = self._parse_library_properties(lib_root).get('name', '')
+        return bool(props_name) and self._norm_lib_name(props_name) in allowed_norm
+
+    def _find_manifest_library_for_header(
+        self, header: str, libs_dir: Path, allowed_norm: set[str]
+    ) -> Path | None:
+        """Like _find_library_for_header, but returns the source root of the
+        first library that provides `header` AND is in the project manifest.
+        Returns None when no DECLARED library provides the header — so a stray
+        same-named lib in the shared dir is never picked up."""
+        for lib_dir in sorted(libs_dir.iterdir()):
+            if not lib_dir.is_dir():
+                continue
+            for src_root in (lib_dir, lib_dir / 'src'):
+                if (src_root / header).exists() and self._library_in_manifest(
+                    lib_dir, allowed_norm
+                ):
+                    return src_root
+        return None
+
+    @staticmethod
+    def _missing_library_headers(result: dict) -> list[str]:
+        """Extract the header filenames a failed compile reported as missing
+        (`fatal error: X.h: No such file or directory`). De-duped, basename
+        only. Used to decide whether a manifest-scoped failure is a missing-
+        dependency case worth retrying with scan-all."""
+        text = '\n'.join(
+            str(result.get(k) or '') for k in ('error', 'stderr', 'stdout')
+        )
+        headers: list[str] = []
+        for m in re.finditer(
+            r'fatal error:\s*([A-Za-z0-9_./+-]+\.h(?:pp)?)\s*:\s*No such file',
+            text,
+        ):
+            h = m.group(1).split('/')[-1]
+            if h not in headers:
+                headers.append(h)
+        return headers
+
+    @staticmethod
+    def _is_transient_build_failure(result: dict) -> bool:
+        """True if a failed compile looks like infrastructure flakiness (cmake
+        configure, ESP-IDF nested bootloader / managed-components, a missing
+        generated sdkconfig.h, a failed CORE esp-idf object) rather than the
+        user's sketch. Such failures hit occasionally on a cold variant build
+        and clear on a retry — and are NEVER caused by user code, so retrying
+        is safe."""
+        if result.get('success'):
+            return False
+        text = (
+            str(result.get('error') or '') + '\n'
+            + str(result.get('stderr') or '') + '\n'
+            + str(result.get('stdout') or '')
+        ).lower()
+        markers = (
+            'managed_components_list.temp.cmake',
+            'cmake configure failed',
+            'sdkconfig.h: no such file',
+            'ninja: error',
+            'esp-idf/bootloader',
+            'cmake error',
+        )
+        return any(m in text for m in markers)
+
+    def _suggest_libraries_for_headers(self, headers: list[str]) -> dict:
+        """For each missing header, the installed libraries that provide it
+        (by Library Manager display name, else folder name). Returns
+        {header: [candidate names]} so a manifest can be completed."""
+        arduino_libs = self._find_arduino_libraries_dir()
+        out: dict[str, list[str]] = {}
+        if not arduino_libs or not arduino_libs.is_dir():
+            return out
+        for h in headers:
+            cands: list[str] = []
+            for lib_dir in sorted(arduino_libs.iterdir()):
+                if not lib_dir.is_dir():
+                    continue
+                for src_root in (lib_dir, lib_dir / 'src'):
+                    if (src_root / h).exists():
+                        name = self._parse_library_properties(lib_dir).get('name') or lib_dir.name
+                        if name not in cands:
+                            cands.append(name)
+                        break
+            if cands:
+                out[h] = cands
+        return out
+
     def _resolve_library_components(
         self,
         ext_headers: list[str],
@@ -637,10 +834,21 @@ class ESPIDFCompiler:
         esp32_libs: Path | None,
         arduino_comp_name: str,
         user_libs_dir: Path,
+        allowed_libraries: set[str] | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         """
         BFS over ext_headers (and transitive includes) to discover all external
         Arduino libraries and merge them into a single 'user_libs_all' IDF component.
+
+        `allowed_libraries` (P2 — project library manifest / scope): when not
+        None, a USER-installed library (from arduino_libs) is merged only if its
+        name is in this set. This makes the project's declared manifest the
+        resolution SCOPE — the compiler never picks up an unrelated library from
+        the shared dir (another user's install, or a same-named clash). When
+        None (no manifest supplied) the behaviour is the legacy scan-all, so
+        existing callers and un-migrated projects are unaffected. Core
+        arduino-esp32 libs and bundled esp32_libs are always allowed (they are
+        platform-provided, not user installs).
 
         All library files are copied flat into one directory, so every header is
         visible to every other header and source file without any cross-component
@@ -661,6 +869,14 @@ class ESPIDFCompiler:
         logger.info(f'[espidf] arduino_libs: {arduino_libs}')
         logger.info(f'[espidf] esp32_libs: {esp32_libs}')
 
+        # P2 manifest scope: normalise the allowed set once (None = scan-all).
+        allowed_norm: set[str] | None = (
+            {self._norm_lib_name(a) for a in allowed_libraries}
+            if allowed_libraries is not None else None
+        )
+        if allowed_norm is not None:
+            logger.info(f'[espidf] library manifest scope active: {sorted(allowed_libraries)}')
+
         comp_dir = user_libs_dir / 'user_libs_all'
         comp_dir.mkdir(exist_ok=True)
 
@@ -678,11 +894,49 @@ class ESPIDFCompiler:
                 continue
             resolved_headers.add(header)
 
-            src_root = (
-                self._find_library_for_header(header, arduino_libs)
-                if arduino_libs and arduino_libs.is_dir()
-                else None
-            )
+            # Core-first. arduino-esp32 core headers (WiFi.h, Wire.h, SPI.h,
+            # WebServer.h, HTTPClient.h, ...) are compiled into the
+            # arduino-esp32 component. They must NEVER resolve to a user
+            # library, even when an installed lib ships a same-named file
+            # (e.g. WiFiEspAT/src/WiFi.h). Resolving to it would merge that
+            # foreign library and break the build. Skip resolution entirely
+            # and let the core provide the header.
+            if header in self._core_provided_headers():
+                logger.info(
+                    f'[espidf] <{header}> is provided by the arduino-esp32 core '
+                    f'— never resolving against user libraries'
+                )
+                continue
+
+            # P2 manifest scope. When a manifest is supplied, resolve the header
+            # to the DECLARED library that provides it — not the first-
+            # alphabetical lib in the shared dir. Several installed libs may
+            # ship the same header name (e.g. DHT118266, DHT_sensor_library,
+            # servodht11 all have DHT.h); the legacy first-match would pick a
+            # stray. The manifest both picks the right lib AND excludes
+            # undeclared ones (another user's install, a clash). No manifest =
+            # legacy first-match (unchanged).
+            if not (arduino_libs and arduino_libs.is_dir()):
+                src_root = None
+            elif allowed_norm is not None:
+                src_root = self._find_manifest_library_for_header(
+                    header, arduino_libs, allowed_norm
+                )
+            else:
+                src_root = self._find_library_for_header(header, arduino_libs)
+
+            # Architecture guard. A user lib that resolves the header but
+            # whose library.properties declares architectures= without
+            # esp32/* is written for a different platform (AVR-only AT-modem
+            # shims, etc.) and would not compile against ESP-IDF. Drop it.
+            if src_root is not None:
+                _lib_root = src_root.parent if src_root.name == 'src' else src_root
+                if not self._library_supports_esp32(_lib_root):
+                    logger.warning(
+                        f'[espidf] <{header}> resolved to "{_lib_root.name}" but its '
+                        f'library.properties architectures exclude esp32 — skipping'
+                    )
+                    src_root = None
 
             # Tracks the "resolved to a core lib that's already compiled into
             # the arduino-esp32 component" case, so we don't fall through to
@@ -1474,6 +1728,8 @@ class ESPIDFCompiler:
         progress_callback: Optional[ProgressCallback] = None,
         board_options: dict | None = None,
         spiffs_files: list[dict] | None = None,
+        allowed_libraries: set[str] | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         """
         Compile Arduino sketch using ESP-IDF.
@@ -1535,22 +1791,107 @@ class ESPIDFCompiler:
             json.dumps(normalized_opts, sort_keys=True).encode()
         ).hexdigest()[:12]
 
-        if _USE_PERSISTENT_DIR:
-            project_dir = _prepare_persistent_project_dir(idf_target, options_hash)
-            logger.info(f'[espidf] Using persistent build dir: {project_dir}')
-            return await self._compile_in_dir(
-                project_dir, files, idf_target, is_c3,
-                progress_callback, normalized_opts, spiffs_files,
-            )
+        # External-include set of the sketch — a stable proxy for "which
+        # libraries this compile resolves". Folded into the per-attempt build
+        # hash below so the persistent build/ is reset (via the tested
+        # _prepare_persistent_project_dir wipe) whenever the library set
+        # changes between compiles. Without this, the shared build/ caches a
+        # cmake config + ninja graph + ccache objects for the PREVIOUS lib set,
+        # which causes intermittent "cmake configure failed" and stale-object
+        # false positives when a different project/manifest compiles next.
+        _sketch_text = '\n'.join(f.get('content', '') for f in files)
+        _core_hdrs = self._core_provided_headers()
+        _ext_inc_token = ','.join(sorted(
+            h for h in set(self._detect_external_includes(_sketch_text))
+            if h not in _core_hdrs
+        ))
 
-        with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
-            project_dir = Path(temp_dir) / 'project'
-            shutil.copytree(_TEMPLATE_DIR, project_dir)
-            logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
-            return await self._compile_in_dir(
-                project_dir, files, idf_target, is_c3,
-                progress_callback, normalized_opts, spiffs_files,
+        async def _attempt(allowed: set[str] | None) -> dict:
+            # P2.1e — materialize a per-compile library scope: the manifest's
+            # libs symlinked from the content-addressed cache (with a legacy-dir
+            # fallback for any not yet cached). A no-op overlay / scan-all
+            # fallback (allowed=None) returns None -> the compiler uses the
+            # single default libraries dir. The scope's content token is folded
+            # into the build-dir hash so a content change (cache vs legacy, or a
+            # cache update) gets its own clean build dir — and the throwaway
+            # scope dir is removed after the attempt (its files were already
+            # copied into the build's user_libs_all by _compile_in_dir).
+            scope = materialize_library_scope(allowed, owner_id)
+            scope_dir = scope[0] if scope else None
+            scope_token = scope[1] if scope else ''
+            # Fold the effective library set + resolved content into the build-dir
+            # hash. A different manifest, the scan-all fallback (allowed=None), or
+            # changed lib CONTENT gets its own clean build dir — resetting at
+            # _prepare time (before any cmake), the well-tested wipe path.
+            _libs_token = (
+                ('m:' + ','.join(sorted(allowed)) + ('|s:' + scope_token if scope_token else ''))
+                if allowed is not None else 'scanall'
             )
+            eff_hash = hashlib.sha256(
+                (options_hash + '|' + _libs_token + '|i:' + _ext_inc_token).encode()
+            ).hexdigest()[:12]
+            try:
+                if _USE_PERSISTENT_DIR:
+                    project_dir = _prepare_persistent_project_dir(idf_target, eff_hash)
+                    logger.info(f'[espidf] Using persistent build dir: {project_dir}')
+                    return await self._compile_in_dir(
+                        project_dir, files, idf_target, is_c3,
+                        progress_callback, normalized_opts, spiffs_files,
+                        allowed_libraries=allowed, libraries_dir=scope_dir,
+                    )
+                with tempfile.TemporaryDirectory(prefix='espidf_') as temp_dir:
+                    project_dir = Path(temp_dir) / 'project'
+                    shutil.copytree(_TEMPLATE_DIR, project_dir)
+                    logger.info(f'[espidf] Using ephemeral build dir: {project_dir}')
+                    return await self._compile_in_dir(
+                        project_dir, files, idf_target, is_c3,
+                        progress_callback, normalized_opts, spiffs_files,
+                        allowed_libraries=allowed, libraries_dir=scope_dir,
+                    )
+            finally:
+                if scope_dir is not None:
+                    # rmtree unlinks the symlinks, never their cache/legacy targets.
+                    shutil.rmtree(scope_dir.parent, ignore_errors=True)
+
+        async def _attempt_safe(allowed: set[str] | None) -> dict:
+            # Retry ONCE on a clearly-transient infrastructure failure (cmake /
+            # nested bootloader / managed-components / sdkconfig) — never on a
+            # user-code error. These hit occasionally on a cold variant build;
+            # a retry resumes the now-warmer build dir and succeeds. Cheap via
+            # ccache + ninja incremental.
+            r = await _attempt(allowed)
+            if not r.get('success') and self._is_transient_build_failure(r):
+                logger.warning('[espidf] transient build failure; retrying once')
+                r2 = await _attempt(allowed)
+                if r2.get('success') or not self._is_transient_build_failure(r2):
+                    return r2
+            return r
+
+        result = await _attempt_safe(allowed_libraries)
+
+        # Graceful fallback (P2). A manifest-scoped compile that fails because a
+        # header isn't in the manifest (an undeclared / transitive dependency)
+        # retries once with scan-all, so a project with an incomplete manifest
+        # still compiles instead of regressing — and we report the gap so the
+        # manifest can be auto-completed (P2.4) or the user prompted to add the
+        # missing library. The caller holds the per-target lock for this whole
+        # method, so the retry safely reuses the same build dir.
+        if allowed_libraries is not None and not result.get('success'):
+            missing = self._missing_library_headers(result)
+            if missing:
+                logger.warning(
+                    f'[espidf] scoped compile missing {missing} (not in manifest) — '
+                    f'retrying scan-all'
+                )
+                retry = await _attempt_safe(None)
+                if retry.get('success'):
+                    retry['manifest_incomplete'] = True
+                    retry['manifest_suggested_libraries'] = (
+                        self._suggest_libraries_for_headers(missing)
+                    )
+                    return retry
+                # Both failed: the scoped error is the more informative one.
+        return result
 
     async def _compile_in_dir(
         self,
@@ -1561,6 +1902,8 @@ class ESPIDFCompiler:
         progress_callback: Optional[ProgressCallback] = None,
         board_options: dict | None = None,
         spiffs_files: list[dict] | None = None,
+        allowed_libraries: set[str] | None = None,
+        libraries_dir: Path | None = None,
     ) -> dict:
         """Inner compile body: writes sketch + libs into `project_dir`,
         runs cmake + ninja, merges binaries. Caller is responsible for
@@ -1577,9 +1920,21 @@ class ESPIDFCompiler:
         # template tree. Doing this BEFORE cmake configure means the new
         # CONFIG_* lines reach kconfig on its first read.
         rendered_sdkconfig = self._render_sdkconfig(board_options, _TEMPLATE_DIR)
-        (project_dir / 'sdkconfig.defaults').write_text(
-            rendered_sdkconfig, encoding='utf-8',
+        defaults_path = project_dir / 'sdkconfig.defaults'
+        prev_defaults = (
+            defaults_path.read_text(encoding='utf-8') if defaults_path.exists() else None
         )
+        defaults_path.write_text(rendered_sdkconfig, encoding='utf-8')
+
+        # ESP-IDF only SEEDS sdkconfig from sdkconfig.defaults when sdkconfig is
+        # ABSENT. Persistent build dirs live in the build volume and keep a
+        # stale sdkconfig across image rebuilds, so a defaults change (a new
+        # CONFIG_* shipped in the template, or different board options) would
+        # otherwise never reach kconfig. Drop the generated sdkconfig when the
+        # rendered defaults change so kconfig re-seeds from them on configure.
+        if prev_defaults is not None and prev_defaults != rendered_sdkconfig:
+            (project_dir / 'sdkconfig').unlink(missing_ok=True)
+            (project_dir / 'sdkconfig.old').unlink(missing_ok=True)
 
         # Generate partitions.csv per the selected scheme.
         partition_csv = self._render_partition_csv(board_options['partitionScheme'])
@@ -1669,11 +2024,17 @@ class ESPIDFCompiler:
                 user_libs_dir.mkdir(exist_ok=True)
 
                 esp32_libs   = Path(self.arduino_path) / 'libraries' if self.arduino_path else None
-                arduino_libs = self._find_arduino_libraries_dir()
+                # P2.1e — when a per-compile library scope was materialized (the
+                # manifest's libs symlinked from the content-addressed cache, with
+                # a legacy-dir fallback), resolve from THAT instead of the shared
+                # global volume. Falls back to the single global dir for scan-all
+                # / OSS self-host.
+                arduino_libs = libraries_dir or self._find_arduino_libraries_dir()
 
                 component_names, _ = self._resolve_library_components(
                     ext_headers, arduino_libs, esp32_libs,
                     arduino_comp_name, user_libs_dir,
+                    allowed_libraries=allowed_libraries,
                 )
 
             # Patch main/CMakeLists.txt — REQUIRES and INCLUDE_DIRS for user_libs_all.

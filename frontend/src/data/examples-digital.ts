@@ -67,6 +67,12 @@ function gate(kind: string, id: string, x: number, y: number) {
   return { type: `velxio-logic-gate-${kind}`, id, x, y, properties: {} };
 }
 
+/** Edge-triggered flip-flop (kind: 'd' | 't' | 'jk'). Digital-engine only —
+ *  no SPICE mapper (no edge detection at DC). Pins: CLK + data + Q + Qbar. */
+function ff(kind: 'd' | 't' | 'jk', id: string, x: number, y: number) {
+  return { type: `velxio-flip-flop-${kind}`, id, x, y, properties: {} };
+}
+
 /** Placeholder code shown in the editor. No MCU is involved. */
 const DIGITAL_SKETCH = `// Pure digital circuit — no MCU.
 // Toggle the electrical-simulation (⚡) button to run the SPICE engine,
@@ -2770,4 +2776,42 @@ export const digitalExamples: ExampleProject[] = [
     ],
     ['bcd', '7-segment', 'decoder', 'k-map'],
   ),
+
+  // ════════════════════════════════════════════════════════════════════════
+  // SEQUENTIAL — flip-flops (digital-engine only; no SPICE edge detection)
+  // ════════════════════════════════════════════════════════════════════════
+
+  (() => {
+    const N = 4;
+    const components: ExampleProject['components'] = [pwr('src', 40, 380)];
+    const wires: ExampleProject['wires'] = [];
+    // CLOCK slide switch -> FF0.CLK (with pull-down).
+    const clk = switchInput('cnt_clk', 'cnt_clk_r', 'src', 'cnt_ff0', 'CLK', 200, 60, 0, 'cnt_clk');
+    components.push(...clk.components);
+    wires.push(...clk.wires);
+    const ledColors = ['red', 'green', 'blue', 'yellow'];
+    const wireColors = [C_OUT_R, C_OUT_G, C_OUT_B, C_OUT_Y];
+    for (let i = 0; i < N; i++) {
+      const id = `cnt_ff${i}`;
+      components.push(ff('t', id, 440, 120 + i * 150));
+      wires.push(w(`cnt_t${i}`, ['src', 'SIG'], [id, 'T'], C_PWR)); // T tied high -> toggle
+      if (i > 0) wires.push(w(`cnt_rip${i}`, [`cnt_ff${i - 1}`, 'Qbar'], [id, 'CLK'], C_SIG)); // ripple
+      const lo = ledOutput(`cnt_lr${i}`, `cnt_led${i}`, 'src', id, 'Q', 720, 110 + i * 150, ledColors[i], `cnt_led${i}`, wireColors[i]);
+      components.push(...lo.components);
+      wires.push(...lo.wires);
+    }
+    return digital(
+      'digital-ripple-counter-4bit',
+      '4-Bit Ripple Counter (T flip-flops)',
+      'Four T flip-flops chained into a ripple counter — impossible on the SPICE ' +
+        'engine (no edge detection at DC). Each time you slide the CLOCK switch from ' +
+        'LOW to HIGH the count advances; the four LEDs show it in binary, LSB at the ' +
+        'top. The event-driven digital engine evaluates the flip-flops exactly. ' +
+        '(Set ?digitalgates=off to see that ngspice cannot run this.)',
+      'advanced',
+      components,
+      wires,
+      ['counter', 'sequential', 'flip-flop', 't-ff', 'ripple', 'digital-engine'],
+    );
+  })(),
 ];

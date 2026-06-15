@@ -1,5 +1,6 @@
 import Editor from '@monaco-editor/react';
 import { useEditorStore } from '../../store/useEditorStore';
+import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { registerRetroAsm, LANGUAGE_ID as RETRO_ASM_ID } from './retroAsmLanguage';
 
 function getLanguage(filename: string): string {
@@ -14,8 +15,39 @@ function getLanguage(filename: string): string {
 }
 
 export const CodeEditor = () => {
-  const { files, activeFileId, setFileContent, theme, fontSize } = useEditorStore();
+  const { files, activeFileId, setFileContent, theme, fontSize, manifestViewBoardId } =
+    useEditorStore();
+  const boards = useSimulatorStore((s) => s.boards);
   const activeFile = files.find((f) => f.id === activeFileId);
+
+  // READ-ONLY libraries.json view (the file explorer's libraries.json entry).
+  // Shows the active board's declared library manifest as plain-text JSON, live.
+  // It is read-only on purpose: adding/removing libraries is done from the
+  // Library Manager modal, which edits board.libraries (this just reflects it).
+  if (manifestViewBoardId) {
+    const b = boards.find((x) => x.id === manifestViewBoardId);
+    const content = JSON.stringify({ libraries: b?.libraries ?? [] }, null, 2);
+    return (
+      <div style={{ height: '100%', width: '100%' }}>
+        <Editor
+          key="__libraries_json__"
+          height="100%"
+          language="json"
+          theme={theme}
+          value={content}
+          options={{
+            readOnly: true,
+            domReadOnly: true,
+            minimap: { enabled: false },
+            fontSize,
+            automaticLayout: true,
+            scrollBeyondLastLine: false,
+            wordWrap: 'on',
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: '100%', width: '100%' }}>

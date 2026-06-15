@@ -21,15 +21,17 @@
         "title": "Arduinoライブラリを検索してインストール",
         "label": "ライブラリ"
       },
-      "import": "プロジェクトをインポート（.vlx Velxio または .zip Wokwi）",
+      "import": "プロジェクトをインポート (.vlx Velxio または .zip Wokwi)",
       "export": "現在のプロジェクトを.zipファイルとしてエクスポート",
-      "uploadFirmware": "ファームウェアをアップロード (.hex, .bin, .elf, .ihex) してコンパイルをスキップ",
-      "toggleConsole": "出力コンソールの表示/非表示",
+      "uploadFirmware": "ファームウェアをアップロード (.hex, .bin, .elf, .ihex) してコンパイルをバイパス",
+      "toggleConsole": "出力コンソールの表示切替",
       "libHint": {
         "message": "ライブラリがありませんか？",
         "cta": "ライブラリマネージャー",
         "dismiss": "閉じる"
-      }
+      },
+      "exportBom": "部品表をエクスポート (CSV — Pro)",
+      "exportScreenshot": "回路図を画像としてエクスポート (PNG — Pro)"
     },
     "fileExplorer": {
       "workspace": "ワークスペース",
@@ -99,13 +101,13 @@
       "makePrivate": "非公開にする",
       "makePublic": "公開にする",
       "copy": "コピー",
-      "privateWarning": "このプロジェクトは非公開です。他の人がこのリンクを開くと403エラーが表示されます。",
+      "privateWarning": "このプロジェクトは非公開です。他のユーザーがこのリンクを開くと403エラーが表示されます。",
       "close": "閉じる"
     },
     "canvas": {
       "status": {
         "running": "実行中",
-        "stopped": "停止中"
+        "stopped": "停止"
       },
       "activeBoard": "アクティブなボード",
       "noBoard": "ボードなし",
@@ -116,25 +118,25 @@
         "empty": "元に戻す操作はありません"
       },
       "redo": {
-        "label": "やり直す",
-        "title": "やり直す: {{description}} (Ctrl+Y)",
+        "label": "やり直し",
+        "title": "やり直し: {{description}} (Ctrl+Y)",
         "empty": "やり直す操作はありません"
       },
-      "toggleSerialMonitor": "シリアルモニタの表示/非表示",
+      "toggleSerialMonitor": "シリアルモニタの表示切替",
       "serial": "シリアル",
-      "toggleScope": "オシロスコープ/ロジックアナライザの表示/非表示",
+      "toggleScope": "オシロスコープ/ロジックアナライザの表示切替",
       "scope": "スコープ",
       "zoomIn": "拡大",
       "zoomOut": "縮小",
-      "resetView": "ビューをリセット (クリックでリセット)",
+      "resetView": "表示をリセット (クリックでリセット)",
       "componentCount_one": "{{count}} コンポーネント",
       "componentCount_other": "{{count}} コンポーネント",
       "addComponentTitle": "コンポーネントを追加",
       "add": "追加",
       "dismiss": "閉じる",
       "removeBoard": "ボードを削除",
-      "wireCount_one": "{{count}} 配線",
-      "wireCount_other": "{{count}} 配線",
+      "wireCount_one": "{{count}} 本の配線",
+      "wireCount_other": "{{count}} 本の配線",
       "removeConfirm": {
         "boardFallback": "ボード",
         "title": "{{label}} を削除しますか？",
@@ -148,11 +150,11 @@
     "componentPicker": {
       "title": "コンポーネントを追加",
       "close": "閉じる",
-      "searchPlaceholder": "コンポーネントを検索...",
+      "searchPlaceholder": "コンポーネントを検索…",
       "clearSearch": "検索をクリア",
       "allComponents": "すべてのコンポーネント",
       "boards": "ボード",
-      "loading": "コンポーネントを読み込み中...",
+      "loading": "コンポーネントを読み込み中…",
       "noResults": "コンポーネントが見つかりません",
       "clearFilters": "フィルターをクリア"
     },
@@ -160,17 +162,17 @@
       "title": "ライブラリマネージャー",
       "searchTab": "検索",
       "installedTab": "インストール済み",
-      "filterPlaceholder": "検索を絞り込む...",
+      "filterPlaceholder": "検索を絞り込む…",
       "searchingFor": "\"{{query}}\" を検索中…",
       "loadingLibraries": "ライブラリを読み込み中…",
       "noResults": "利用可能なライブラリがありません",
       "noResultsFor": "\"{{query}}\" に一致するライブラリが見つかりません",
       "byAuthor": "作者: {{author}}",
       "install": "インストール",
-      "installing": "インストール中...",
+      "installing": "インストール中…",
       "uninstall": "アンインストール",
-      "uninstalling": "アンインストール中...",
-      "loadingInstalled": "インストール済みライブラリを読み込み中...",
+      "uninstalling": "アンインストール中…",
+      "loadingInstalled": "インストール済みライブラリを読み込み中…",
       "noneInstalled": "まだライブラリがインストールされていません。",
       "useSearchTab": "検索タブを使用してライブラリをインストールしてください。"
     },
@@ -271,11 +273,11 @@
       "offline": "オフライン",
       "powerOnTitle": "Raspberry Pi の電源を入れる",
       "startPi": "Pi を起動",
-      "connectTitle": "端末を Pi に接続",
+      "connectTitle": "ターミナルを Pi に接続",
       "connect": "接続",
-      "disconnectTitle": "端末を切断",
+      "disconnectTitle": "ターミナルを切断",
       "disconnect": "切断",
-      "terminal": "端末",
+      "terminal": "ターミナル",
       "close": "閉じる",
       "offlineTitle": "{{board}} の電源がオフです",
       "offlineSubtitle": "Pi を起動して端末を開き、Linux システムと対話します。",
@@ -307,82 +309,84 @@
       "clearTitle": "このボードの出力をクリア",
       "clear": "クリア",
       "send": "送信",
-      "iotGatewayTitle": "クリックしてIoTゲートウェイ経由で開く",
-      "openIotGateway": "IoTゲートウェイを開く",
-      "waitingData": "シリアルデータを待機中...",
+      "iotGatewayTitle": "クリックして IoT ゲートウェイ経由で開く",
+      "openIotGateway": "IoT ゲートウェイを開く",
+      "waitingData": "シリアルデータを待機中…",
       "startSim": "シミュレーションを開始してシリアル出力を確認します。",
-      "placeholderText": "送信するメッセージを入力...",
-      "placeholderPython": "Python式を入力... (Ctrl+Cで中断)",
+      "placeholderText": "送信するメッセージを入力…",
+      "placeholderPython": "Python 式を入力… (Ctrl+C で中断)",
       "lineEnd": {
-        "none": "行末なし",
+        "none": "改行なし",
         "nl": "改行",
-        "cr": "復帰",
-        "both": "改行と復帰の両方"
+        "cr": "キャリッジリターン",
+        "both": "NL と CR の両方"
       }
     }
   },
   "about": {
     "hero": {
-      "title": "Velxioについて",
-      "subtitle": "無料でオープンソースの組み込みシステムエミュレータ — ハードウェアとオープンソースに情熱を持つ一人の開発者によって作られました。"
+      "title": "Velxio について",
+      "subtitle": "無料のオープンソース組み込みシステムエミュレータ — ハードウェアとオープンソースに情熱を持つ一人の開発者によって構築されました。"
     },
     "story": {
       "heading": "ストーリー",
-      "p1": "Velxioは、マイクロコントローラエミュレータが内部でどのように動作するか — CPU命令、メモリ管理、ペリフェラルのタイミング、低レベルアーキテクチャ — を個人的に探求することから始まりました。休暇中の学習プロジェクトとして始まったものが、すぐに大きなものに成長しました。",
-      "p2": "アイデアはシンプルでした: <strong>もし誰でもArduino、ESP32、Raspberry Piボードをブラウザ上で直接シミュレーションできたら？ハードウェアを購入せず、ツールチェーンをインストールせず、クラウドアカウントも不要で。</strong>",
-      "p3": "Velxio v1はProduct HuntとHacker Newsでローンチされ、Arduino UnoとRaspberry Pi Picoをサポートしました。メーカーや組み込みコミュニティからのフィードバックは素晴らしく、プロジェクトを前進させました。",
-      "p4": "<strong>Velxio 2.0</strong>では、QEMU（lcgamboaフォーク）によるESP32エミュレーション、実際のLinuxを実行するRaspberry Pi 3、ESP32-C3とCH32V003のRISC-Vサポート、リアルなセンサーシミュレーション（DHT22、HC-SR04、WS2812B NeoPixel）、そして5つのCPUアーキテクチャにわたる19のボードを搭載 — すべて実際のコンパイル済みコードを実行します。",
-      "p5": "v2のローンチは<strong>Hacker Newsのトップページに20時間以上掲載</strong>され、24時間以内に約600のGitHubスターと数千人の訪問者を獲得しました。現在、世界中の学生、教授、メーカーによって使用されています。"
+      "p1": "Velxio は、マイクロコントローラエミュレータが内部でどのように動作するか — CPU 命令、メモリ管理、ペリフェラルのタイミング、低レベルアーキテクチャ — を個人的に探求することから始まりました。休暇中の学習プロジェクトとして始まったものが、すぐに大きなものに成長しました。",
+      "p2": "アイデアはシンプルでした: <strong>ハードウェアを購入せず、ツールチェーンをインストールせず、クラウドアカウントも不要で、誰でもブラウザ上で Arduino、ESP32、Raspberry Pi ボードを直接シミュレートできたらどうだろう？</strong>",
+      "p3": "Velxio v1 は Product Hunt と Hacker News でローンチされ、Arduino Uno と Raspberry Pi Pico をサポートしました。メーカーや組み込みコミュニティからのフィードバックは素晴らしく、プロジェクトを前進させました。",
+      "p4": "<strong>Velxio 2.0</strong> では、QEMU (lcgamboa フォーク) による ESP32 エミュレーション、実際の Linux を実行する Raspberry Pi 3、ESP32-C3 と CH32V003 の RISC-V サポート、リアルなセンサーシミュレーション (DHT22、HC-SR04、WS2812B NeoPixel)、および 5 つの CPU アーキテクチャにわたる 19 のボードを搭載 — すべて実際のコンパイル済みコードを実行します。",
+      "p5": "v2 のローンチは <strong>Hacker News のトップページに 20 時間以上掲載</strong>され、24 時間足らずで 600 近い GitHub スターと数千人の訪問者を獲得しました。現在、世界中の学生、教授、メーカーによって使用されています。"
     },
     "howItWorks": {
       "heading": "仕組み",
-      "avrRp2040Body": "サイクル精度のエミュレーションがブラウザ内で完全に実行されます（avr8jsおよびrp2040jsを使用）。シミュレーションにバックエンドは不要です。",
-      "esp32Body": "Xtensa ESP32およびESP32-S3は、バックエンドのQEMU（lcgamboaフォーク）で実行され、実際のフラッシュイメージ、GPIO、ADC、タイマーを備えています。",
-      "riscvBody": "ESP32-C3（DevKit、XIAO、SuperMini）およびCH32V003は、QEMU lcgamboaフォークとlibqemu-riscv32を介してエミュレートされ、Xtensa ESP32と同じバックエンドパターンです。",
-      "raspiBody": "QEMU raspi3bを介した完全なARM Cortex-A53 Linux — 実際のRaspberry Pi OSを起動し、RPi.GPIOを使用してPythonを実行します。"
+      "avrRp2040Body": "サイクル精度のエミュレーションが avr8js と rp2040js を使用してブラウザ内で完全に実行されます。シミュレーションにバックエンドは不要です。",
+      "esp32Body": "Xtensa ESP32 および ESP32-S3 は、バックエンド QEMU (lcgamboa フォーク) 上で実際のフラッシュイメージ、GPIO、ADC、タイマーを使用して実行されます。",
+      "riscvBody": "ESP32-C3 (DevKit、XIAO、SuperMini) および CH32V003 は、QEMU lcgamboa フォークと libqemu-riscv32 を使用してエミュレートされ、Xtensa ESP32 と同じバックエンドパターンです。",
+      "raspiBody": "QEMU raspi3b による完全な ARM Cortex-A53 Linux — 実際の Raspberry Pi OS を起動し、RPi.GPIO を使用して Python を実行します。"
     },
     "openSource": {
       "heading": "オープンソースの哲学",
-      "lead": "Velxioは<strong>100%オープンソース</strong>で、AGPLv3ライセンスの下で提供されています。クラウド依存なし、学生アカウント不要、データがネットワーク外に出ることはありません。大学やブートキャンプは、単一のDockerコマンドで自社サーバーにデプロイし、すべての学生に完全な組み込み開発環境を無料で提供できます。",
+      "lead": "Velxio は AGPLv3 ライセンスの下で <strong>100% オープンソース</strong>です。クラウド依存なし、学生アカウント不要、データがネットワーク外に出ることはありません。大学やブートキャンプは、単一の Docker コマンドで自社サーバーにデプロイし、すべての学生に完全な組み込み開発環境を無料で提供できます。",
       "creditsIntro": "このプロジェクトは、コミュニティからの素晴らしいオープンソースの成果に基づいています:",
       "credits": {
-        "avr8js": "WokwiによるAVR8 CPUエミュレーション",
-        "rp2040js": "WokwiによるRP2040エミュレーション",
-        "wokwiElements": "Wokwiによる48以上の視覚的電子コンポーネント",
-        "qemuLcgamboa": "ESP32およびRaspberry PiのQEMUエミュレーション",
-        "arduinoCli": "Arduinoコンパイルツールチェーン"
+        "avr8js": "Wokwi による AVR8 CPU エミュレーション",
+        "rp2040js": "Wokwi による RP2040 エミュレーション",
+        "wokwiElements": "Wokwi による 48 以上の視覚的電子コンポーネント",
+        "qemuLcgamboa": "ESP32 および Raspberry Pi QEMU エミュレーション",
+        "arduinoCli": "Arduino コンパイルツールチェーン"
       },
-      "inspiredBy": "Velxioは<a>Wokwi</a>に触発されました。Wokwiは素晴らしいツールです。Velxioの目標は、別の道を進むことです: 完全にオープンソースで、セルフホスト可能、同じ回路内で複数の異種ボードをサポートします。"
+      "inspiredBy": "Velxio は <a>Wokwi</a> に触発されました。Wokwi は素晴らしいツールです。Velxio の目標は、完全にオープンソースで、セルフホスト可能で、同じ回路内で複数の異種ボードをサポートするという異なる道を進むことです。"
     },
     "creator": {
       "heading": "クリエイター",
-      "role": "IBM アプリケーションアーキテクト · モンテビデオ、ウルグアイ",
-      "bio1": "10年以上の経験を持つアプリケーションアーキテクトで、大規模エンタープライズエコシステムの開発をリード。生成AI（LLM、RAG、LangChain）、クラウドネイティブアーキテクチャ（OpenShift、Kubernetes）のスペシャリストであり、認定Odoo ERPエキスパート。現在はIBMでウルグアイ州保険銀行（BSE）向けのエンタープライズアプリケーションに従事。",
-      "bio2": "キューバのUniversidad de Orienteでコンピュータサイエンス工学を学び（2012-2017）、その後ウルグアイに移住。Quanam（政府機関向けOdoo実装）やIBM（BPSおよびBSE向けエンタープライズアーキテクチャ）でのキャリアを築く。",
-      "bio3": "プログラミングとロボット工学の愛好家。他のオープンソースプロジェクトのクリエイターでもあり、<a>ESP32で動作する3Dレーシングゲーム</a>（Redditで40K以上のビューを獲得）やRaspberry Pi用のiPod Classicクローンなどがある。",
+      "role": "アプリケーションアーキテクト @ IBM · モンテビデオ、ウルグアイ",
+      "bio1": "大規模エンタープライズエコシステムの開発をリードしてきた10年以上の経験を持つアプリケーションアーキテクト。生成AI (LLM、RAG、LangChain)、クラウドネイティブアーキテクチャ (OpenShift、Kubernetes) のスペシャリストであり、認定 Odoo ERP エキスパート。現在は IBM でウルグアイ国営保険銀行 (BSE) 向けのエンタープライズアプリケーションに従事。",
+      "bio2": "キューバの Universidad de Oriente でコンピュータサイエンス工学を学び (2012-2017)、その後ウルグアイに移住。Quanam (政府機関向け Odoo 実装)、IBM (BPS および BSE 向けエンタープライズアーキテクチャ) での役割を経てキャリアを築く。",
+      "bio3": "プログラミングとロボット工学の愛好家。他のオープンソースプロジェクトのクリエイターであり、<a>ESP32 上で動作する 3D レーシングゲーム</a> (Reddit で 40K 以上のビューでバイラル) や Raspberry Pi 用 iPod Classic クローンなどがある。",
       "techStack": "技術スタック"
     },
     "releases": {
       "heading": "最近のリリース",
       "latest": "最新",
-      "v25Tagline": "ArduinoとSPICEがブラウザで出会う",
-      "v25Blurb": "ngspice-WASMによるリアルタイムアナログ回路シミュレーション。Arduino、ESP32、Raspberry Pi Picoに配線可能。100以上のSPICE精度のコンポーネント、ライブ電流計・電圧計、40の新しいアナログ/ハイブリッド例 — ファームウェアと共にシミュレーション。",
+      "v3Tagline": "レトロ CPU、マルチボードシステム、全回路精度",
+      "v3Blurb": "カスタム ROM を備えたプログラマブル Z80/8080/4004 レトロ CPU、MicroSD および ePaper エミュレーション、真のマルチボード UART/I2C/SPI 相互接続、ESP32-CAM、完全な元に戻す/やり直し、完全な ngspice WASM 移行、88% 小さいバンドル、100 以上の新しい例。",
+      "v25Tagline": "Arduino と SPICE がブラウザで出会う",
+      "v25Blurb": "ngspice-WASM によるリアルタイムアナログ回路シミュレーション、Arduino、ESP32、Raspberry Pi Pico に配線。100 以上の SPICE 精度のコンポーネント、ライブ電流計と電圧計、40 の新しいアナログ/ハイブリッド例 — ファームウェアと共同シミュレーション。",
       "v2Tagline": "マルチボードキャンバス、ESP32、Raspberry Pi 3",
-      "v2Blurb": "WiFi/BLE対応の完全なQEMU駆動ESP32エミュレーション、Raspberry Pi 3B Linux、Pico/ESP32でのMicroPythonサポート、カスタムWASMチップ、マルチボード共同シミュレーションを備えた再設計されたキャンバス。",
+      "v2Blurb": "WiFi/BLE を備えた完全な QEMU 駆動の ESP32 エミュレーション、Raspberry Pi 3B Linux、Pico/ESP32 全体での MicroPython サポート、カスタム WASM チップ、マルチボード共同シミュレーションを備えた再設計されたキャンバス。",
       "readNotes": "ローンチノートを読む →"
     },
     "quote": {
-      "p1": "\"私は2012年から2017年までキューバでコンピュータサイエンスを学びました。ウルグアイに移住したとき、最もよく聞かれた質問は: <em>'インターネットもコンピュータもYouTubeもなしでどうやってエンジニアとして卒業したの？'</em>",
-      "p2": "答えはたった4つの言葉でした: <strong>忍耐！忍耐！忍耐！忍耐！</strong>",
-      "p3": "計画Bがないことほど良いモチベーションはありません。\""
+      "p1": "\"私は 2012 年から 2017 年までキューバでコンピュータサイエンスを学びました。ウルグアイに移住したとき、最もよく聞かれた質問は: <em>'インターネットもコンピュータも YouTube もなしでどうやってエンジニアとして卒業したの？'</em>",
+      "p2": "答えはたった 4 つの言葉でした: <strong>忍耐！忍耐！忍耐！忍耐！</strong>",
+      "p3": "プラン B がないことほど良い動機はありません。\""
     },
     "community": {
       "heading": "コミュニティとプレス",
       "stats": {
-        "githubStars": "GitHubスター",
+        "githubStars": "GitHub スター",
         "countries": "国",
         "supportedBoards": "サポートボード数",
-        "cpuArchitectures": "CPUアーキテクチャ"
+        "cpuArchitectures": "CPU アーキテクチャ"
       },
       "featuredOn": "掲載メディア:",
       "press": {
@@ -390,8 +394,8 @@
       }
     },
     "cta": {
-      "title": "Velxioを試してみませんか？",
-      "subtitle": "サインアップ不要。100%ブラウザで動作。無料でオープンソース。",
+      "title": "Velxio を試してみませんか？",
+      "subtitle": "サインアップ不要。100% ブラウザで動作。無料でオープンソース。",
       "openEditor": "エディタを開く"
     }
   }

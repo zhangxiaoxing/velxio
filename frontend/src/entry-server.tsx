@@ -26,6 +26,7 @@ import { RaspberryPiPicoSimulatorPage } from './pages/RaspberryPiPicoSimulatorPa
 import { RaspberryPiSimulatorPage } from './pages/RaspberryPiSimulatorPage';
 import { Velxio2Page } from './pages/Velxio2Page';
 import { Velxio25Page } from './pages/Velxio25Page';
+import { Velxio3Page } from './pages/Velxio3Page';
 import { DocsPage } from './pages/DocsPage';
 import { ExampleDetailPage } from './pages/ExampleDetailPage';
 
@@ -44,6 +45,7 @@ const ROUTE_COMPONENTS: Record<string, React.FC> = {
   '/raspberry-pi-simulator': RaspberryPiSimulatorPage,
   '/v2': Velxio2Page,
   '/v2-5': Velxio25Page,
+  '/v3': Velxio3Page,
   // Docs sections — all use DocsPage with different URL params
   '/docs': DocsPage,
   '/docs/intro': DocsPage,

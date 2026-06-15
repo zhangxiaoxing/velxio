@@ -183,6 +183,18 @@ def test_render_sdkconfig_cpu_freq(compiler: ESPIDFCompiler) -> None:
     assert 'CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=160' in text
 
 
+def test_render_sdkconfig_enables_mbedtls_psk(compiler: ESPIDFCompiler) -> None:
+    # arduino-esp32's WiFiClientSecure/ssl_client.cpp guards its whole body on a
+    # PSK key-exchange being enabled. Without it the object compiles empty and
+    # any WiFiClientSecure / HTTPClient.begin() sketch fails to link with
+    # "undefined reference to start_ssl_client".
+    from app.services.espidf_compiler import _TEMPLATE_DIR
+    opts = compiler._normalize_options(None, idf_target='esp32')
+    text = compiler._render_sdkconfig(opts, _TEMPLATE_DIR)
+    assert 'CONFIG_MBEDTLS_PSK_MODES=y' in text
+    assert 'CONFIG_MBEDTLS_KEY_EXCHANGE_PSK=y' in text
+
+
 def test_render_sdkconfig_debug_level_verbose(compiler: ESPIDFCompiler) -> None:
     from app.services.espidf_compiler import _TEMPLATE_DIR
     opts = compiler._normalize_options(

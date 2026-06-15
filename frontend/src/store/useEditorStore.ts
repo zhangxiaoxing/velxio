@@ -104,6 +104,12 @@ interface EditorState {
   files: WorkspaceFile[];
   activeFileId: string;
   openFileIds: string[];
+  /** When set, the editor shows a READ-ONLY `libraries.json` view of this
+   *  board's library manifest (board.libraries) instead of the active file.
+   *  Cleared whenever a real file is opened/activated. Managed by the explorer's
+   *  libraries.json entry; the Library Manager modal is what edits the manifest. */
+  manifestViewBoardId: string | null;
+  setManifestView: (boardId: string | null) => void;
   theme: 'vs-dark' | 'light';
   fontSize: number;
   viewMode: EditorViewMode;
@@ -159,6 +165,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   files: [DEFAULT_FILE],
   activeFileId: MAIN_ID,
   openFileIds: [MAIN_ID],
+  manifestViewBoardId: null,
+  setManifestView: (boardId: string | null) => set({ manifestViewBoardId: boardId }),
   theme: 'vs-dark',
   fontSize: 14,
   viewMode: 'both',
@@ -266,6 +274,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return {
         openFileIds: s.openFileIds.includes(id) ? s.openFileIds : [...s.openFileIds, id],
         activeFileId: id,
+        manifestViewBoardId: null, // opening a real file exits the libraries.json view
         openGroupFileIds: {
           ...s.openGroupFileIds,
           [groupId]: groupOpenIds.includes(id) ? groupOpenIds : [...groupOpenIds, id],
@@ -299,6 +308,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const groupId = s.activeGroupId;
       return {
         activeFileId: id,
+        manifestViewBoardId: null, // activating a real file exits the libraries.json view
         activeGroupFileId: { ...s.activeGroupFileId, [groupId]: id },
       };
     });

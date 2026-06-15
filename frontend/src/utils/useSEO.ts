@@ -16,6 +16,22 @@ function qs(selector: string): HTMLMetaElement | null {
 }
 
 /**
+ * Canonical + og:url must carry a trailing slash to match the URL the server
+ * actually serves (nginx 301-redirects the slash-less form), so the canonical
+ * never points at a redirecting URL and project pages agree with their
+ * sitemap entry. Query/hash are preserved.
+ */
+function withTrailingSlash(u: string): string {
+  try {
+    const parsed = new URL(u, 'https://velxio.dev');
+    if (!parsed.pathname.endsWith('/')) parsed.pathname += '/';
+    return parsed.toString();
+  } catch {
+    return u.endsWith('/') ? u : `${u}/`;
+  }
+}
+
+/**
  * Updates document.title, meta description, OG/Twitter tags, and canonical
  * to reflect the current page. Restores originals on unmount.
  *
@@ -63,6 +79,7 @@ export function useSEO({ title, description, url, ogImage, jsonLd, noindex }: SE
     }
 
     // Apply
+    const canonicalUrl = withTrailingSlash(url);
     document.title = title;
     set(descEl, description);
     if (noindex) {
@@ -70,11 +87,11 @@ export function useSEO({ title, description, url, ogImage, jsonLd, noindex }: SE
     }
     set(ogTitleEl, title);
     set(ogDescEl, description);
-    set(ogUrlEl, url);
+    set(ogUrlEl, canonicalUrl);
     if (ogImage) set(ogImgEl, ogImage);
     set(twTitleEl, title);
     set(twDescEl, description);
-    activeCanonical.setAttribute('href', url);
+    activeCanonical.setAttribute('href', canonicalUrl);
 
     // Inject JSON-LD once (module-level constants don't change)
     if (jsonLd && !scriptRef.current) {

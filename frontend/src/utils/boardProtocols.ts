@@ -199,8 +199,11 @@ function normalizePinName(boardKind: string, pinName: string): string | null {
     return null;
   }
 
-  // GP-prefix: "GP10" → "10"
-  if (trimmed.startsWith('GP')) {
+  // GP-prefix: "GP10" → "10" (RP2040). Exclude "GPIO..." (ESP32) — that is
+  // handled below; without this guard `parseInt("IO17")` = NaN swallowed every
+  // GPIOnn pin into null, so ESP32 wires drawn on GPIO-labelled pins never
+  // classified as UART/I2C/SPI.
+  if (trimmed.startsWith('GP') && !trimmed.startsWith('GPIO')) {
     const n = parseInt(trimmed.substring(2), 10);
     return isNaN(n) ? null : String(n);
   }
@@ -226,26 +229,53 @@ function normalizePinName(boardKind: string, pinName: string): string | null {
     return isNaN(n) ? null : String(n);
   }
 
-  // TX/RX aliases — board-specific
-  if (trimmed === 'TX') {
+  // UART/I2C function-name aliases — board-specific. ESP32 silkscreens label
+  // pins by function (TX/RX = UART0, TX2/RX2 = UART2), so wires drawn against
+  // those labels must resolve to GPIO numbers. Use startsWith('esp32') (not an
+  // exact match) so every variant — esp32-devkit-c-v4, esp32-cam, esp32-s3,
+  // wemos-lolin32-lite — works, mirroring tableFor(). esp32-c3 has its own pins.
+  const isEsp32 = boardKind.startsWith('esp32');
+  const isEsp32C3 = boardKind.startsWith('esp32-c3');
+
+  // Arduino Mega exposes 4 hardware UARTs + I2C by silkscreen label. Its UART
+  // pins are also numbered (0/1, 18/19, 16/17, 14/15) and classify on those,
+  // but the dedicated SDA/SCL pins are ONLY labelled, so I2C links drawn on
+  // them never classified. Map every Mega function label here.
+  if (boardKind === 'arduino-mega') {
+    const mega: Record<string, string> = {
+      TX: '1', RX: '0', TX0: '1', RX0: '0',
+      TX1: '18', RX1: '19', TX2: '16', RX2: '17', TX3: '14', RX3: '15',
+      SDA: '20', SCL: '21',
+    };
+    if (mega[trimmed]) return mega[trimmed];
+  }
+
+  if (trimmed === 'TX' || trimmed === 'TX0' || trimmed === 'TXD' || trimmed === 'TXD0') {
     if (boardKind === 'arduino-uno' || boardKind === 'arduino-nano') return '1';
     if (boardKind === 'raspberry-pi-pico' || boardKind === 'pi-pico-w') return '0';
-    if (boardKind === 'esp32') return '1';
+    if (isEsp32C3) return '21';
+    if (isEsp32) return '1';
   }
-  if (trimmed === 'RX') {
+  if (trimmed === 'RX' || trimmed === 'RX0' || trimmed === 'RXD' || trimmed === 'RXD0') {
     if (boardKind === 'arduino-uno' || boardKind === 'arduino-nano') return '0';
     if (boardKind === 'raspberry-pi-pico' || boardKind === 'pi-pico-w') return '1';
-    if (boardKind === 'esp32') return '3';
+    if (isEsp32C3) return '20';
+    if (isEsp32) return '3';
   }
+  // ESP32 UART2 (Serial2) default pins: TX2 = GPIO17, RX2 = GPIO16. c3 has no UART2.
+  if ((trimmed === 'TX2' || trimmed === 'TXD2') && isEsp32 && !isEsp32C3) return '17';
+  if ((trimmed === 'RX2' || trimmed === 'RXD2') && isEsp32 && !isEsp32C3) return '16';
   if (trimmed === 'SDA') {
     if (boardKind === 'arduino-uno' || boardKind === 'arduino-nano') return '18';
     if (boardKind === 'raspberry-pi-pico' || boardKind === 'pi-pico-w') return '4';
-    if (boardKind === 'esp32') return '21';
+    if (isEsp32C3) return '5';
+    if (isEsp32) return '21';
   }
   if (trimmed === 'SCL') {
     if (boardKind === 'arduino-uno' || boardKind === 'arduino-nano') return '19';
     if (boardKind === 'raspberry-pi-pico' || boardKind === 'pi-pico-w') return '5';
-    if (boardKind === 'esp32') return '22';
+    if (isEsp32C3) return '6';
+    if (isEsp32) return '22';
   }
 
   // STM32 port labels (PA9, PB12, PC13…) are used verbatim as table keys.

@@ -5,13 +5,7 @@ import { I2CBusManager, wireRpI2cToBus, nullI2CMaster } from './I2CBusManager';
 import type { I2CDevice } from './I2CBusManager';
 import { bootromB1 } from './rp2040-bootrom';
 import { loadUF2, loadUserFiles, getFirmware } from './MicroPythonLoader';
-import {
-  Cyw43Emulator,
-  PioBusSniffer,
-  type Cyw43Bridge,
-  type LedEvent,
-  type PacketOutEvent,
-} from './cyw43';
+import { type PioPeripheral, createPioPeripheral } from './PioPeripheral';
 
 /**
  * RP2040Simulator — Emulates Raspberry Pi Pico (RP2040) using rp2040js
@@ -37,7 +31,110 @@ import {
 const F_CPU = 125_000_000; // 125 MHz
 const CYCLE_NANOS = 1e9 / F_CPU; // nanoseconds per cycle (~8 ns)
 const FPS = 60;
-const CYCLES_PER_FRAME = Math.floor(F_CPU / FPS); // ~2 083 333
+const CYCLES_PER_MS = F_CPU / 1000; // 125 000 cycles per simulated millisecond
+
+/** Minimal structural view of the rp2040js clock we drive. */
+interface SimClock {
+  readonly nanosToNextAlarm: number;
+  tick(nanos: number): void;
+}
+
+// Real-time scheduler.  The RP2040 core is ~8x heavier to emulate than the
+// AVR (125 MHz vs 16 MHz), so a host that cannot execute 125 M instructions
+// per second of wall-clock would otherwise run the simulation in slow motion:
+// a `delay(1000)` blink renders every 4-5 s.  Two mechanisms keep sim-time
+// locked to wall-time:
+//   1. The frame budget is derived from the MEASURED wall-clock delta (like
+//      AVRSimulator), not a fixed 1/60 s, so the sim never silently falls
+//      behind the assumed 60 fps.
+//   2. A `delay()` busy-wait spins reading the timer without putting the core
+//      to sleep (no WFI), so the WFI fast-path never triggers and the emulator
+//      grinds every idle cycle.  IdleSpinDetector recognises such a
+//      side-effect-free spin and we advance the clock over it instead of
+//      executing it — exactly what the WFI path already does for sleep().
+const MAX_DELTA_MS = 50; // clamp the wall-clock delta (paused/backgrounded tab)
+// When an idle spin is elided with no timer alarm to anchor the jump, advance
+// at most this many cycles before letting the firmware re-check its deadline.
+// Bounds the delay overshoot to ~1 ms; with an alarm pending we stop exactly
+// at the alarm (no overshoot).
+const IDLE_SLICE_CYCLES = CYCLES_PER_MS; // 1 ms
+
+/**
+ * Detects a side-effect-free busy-wait spin (e.g. arduino-pico `delay()`,
+ * which polls the timer in a tight loop instead of sleeping).  Fed the PC
+ * about to execute on every instruction; reads the GPIO snapshot lazily, only
+ * when a backward branch closes a loop iteration, so the hot path stays cheap.
+ *
+ * Reports a spin only once the SAME loop has iterated `threshold` times with
+ * NO GPIO change (input or output) — so a bit-bang loop (toggles a pin every
+ * iteration) and an input-poll that just saw its pin move are never elided,
+ * and neither is a loop that calls out (long forward jump resets the count).
+ * A false positive is bounded-harmless: we only ever advance time up to the
+ * wall-clock budget, never past the next timer alarm or scheduled pin change.
+ */
+export class IdleSpinDetector {
+  private prevPc = -1;
+  private loopTarget = -1;
+  private iters = 0;
+  private gpioAtLastIter = -1;
+
+  constructor(
+    private readonly threshold = 32,
+    private readonly maxStride = 256,
+  ) {}
+
+  /**
+   * @param pc   program counter about to execute
+   * @param gpio thunk returning the current GPIO snapshot (called only on a
+   *             backward branch, so the 30-pin scan stays off the hot path)
+   * @returns true when a stable, side-effect-free spin is detected
+   */
+  observe(pc: number, gpio: () => number): boolean {
+    const prev = this.prevPc;
+    this.prevPc = pc;
+    if (prev === -1) return false;
+
+    if (pc < prev) {
+      // Backward branch — one loop iteration just closed.
+      const g = gpio();
+      if (this.loopTarget !== pc) {
+        // First time we land on this loop top (or the loop moved): start over.
+        this.loopTarget = pc;
+        this.gpioAtLastIter = g;
+        this.iters = 1;
+        return false;
+      }
+      if (g !== this.gpioAtLastIter) {
+        // A pin changed during the iteration — real work (bit-bang) or an
+        // input arrived.  Not idle; restart the count from this iteration.
+        this.gpioAtLastIter = g;
+        this.iters = 1;
+        return false;
+      }
+      this.iters++;
+      return this.iters >= this.threshold;
+    }
+
+    if (pc > prev + this.maxStride) {
+      // Long forward jump (call / loop exit) — left the tight spin.
+      this.reset();
+    }
+    return false;
+  }
+
+  /** Call right after eliding a slice so the firmware re-checks its deadline
+   *  (executes the loop body again) before the next jump. */
+  noteElided(): void {
+    this.iters = 0;
+  }
+
+  reset(): void {
+    this.prevPc = -1;
+    this.loopTarget = -1;
+    this.iters = 0;
+    this.gpioAtLastIter = -1;
+  }
+}
 
 /**
  * Backward-compatible alias for the unified `I2CDevice` shape used by
@@ -60,12 +157,14 @@ export class RP2040Simulator {
   private pioStepAccum = 0;
   private usbCDC: USBCDC | null = null;
   private micropythonMode = false;
+  // Real-time scheduler state (see IdleSpinDetector + runFrameForTime).
+  private lastTimestamp = 0;
+  private readonly idleDetector = new IdleSpinDetector();
 
-  // ── Pico W WiFi (CYW43439) — only attached when boardKind === 'pi-pico-w'.
-  private cyw43: Cyw43Emulator | null = null;
-  private cyw43Sniffer: PioBusSniffer | null = null;
-  private cyw43Bridge: Cyw43Bridge | null = null;
-  private cyw43HookedFifos: Array<{ restore: () => void }> = [];
+  // ── Generic PIO/gSPI bus peripheral (e.g. the pro WiFi co-processor). Null
+  //    in OSS (no factory installed); attached for boards a factory supports.
+  private pioPeripheral: PioPeripheral | null = null;
+  private pioHookedFifos: Array<{ restore: () => void }> = [];
 
   /** Serial output callback — fires for each byte the Pico sends on UART0 (or USBCDC in MicroPython mode) */
   public onSerialData: ((char: string) => void) | null = null;
@@ -101,11 +200,6 @@ export class RP2040Simulator {
     }
     return this._spiAdapter;
   }
-
-  /** Fires when the on-board LED on Pico W (driven through the CYW43, not GPIO 25) toggles. */
-  public onPicoWLed: ((on: boolean) => void) | null = null;
-  /** Fires whenever the chip emits a Wi-Fi link-up event for the synthetic AP. */
-  public onPicoWWifiUp: ((ssid: string) => void) | null = null;
 
   /**
    * Fires for every GPIO pin transition with a millisecond timestamp.
@@ -174,22 +268,27 @@ export class RP2040Simulator {
     files: Array<{ name: string; content: string }>,
     onProgress?: (loaded: number, total: number) => void,
   ): Promise<void> {
-    console.log('[RP2040] Loading MicroPython firmware...');
+    // A WiFi/gSPI peripheral (the pro overlay's CYW43) is attached only for
+    // pi-pico-w boards; its presence selects the RPI_PICO_W firmware variant
+    // (network + driver + bigger LittleFS). OSS has no peripheral -> 'pico'.
+    const variant = this.pioPeripheral ? 'pico-w' : 'pico';
+    console.log(`[RP2040] Loading MicroPython firmware (${variant})...`);
 
     // 1. Get MicroPython UF2 firmware (cached in IndexedDB)
-    const firmware = await getFirmware(onProgress);
+    const firmware = await getFirmware(variant, onProgress);
 
     // 2. Create fresh RP2040 instance
     this.rp2040 = new RP2040();
-    this.rp2040.logger = new ConsoleLogger(LogLevel.Error);
+    this.rp2040.logger = new ConsoleLogger(LogLevel.Error, false);
     this.rp2040.loadBootrom(bootromB1);
 
     // 3. Load UF2 firmware into flash
     loadUF2(firmware, this.rp2040.flash);
     console.log(`[RP2040] MicroPython UF2 loaded (${firmware.length} bytes)`);
 
-    // 4. Create LittleFS with user files and load into flash
-    await loadUserFiles(files, this.rp2040.flash);
+    // 4. Create LittleFS with user files and load into flash (variant-specific
+    //    flash offset — the Pico W FS lives higher than the plain Pico's).
+    await loadUserFiles(files, this.rp2040.flash, variant);
     console.log(`[RP2040] LittleFS loaded with ${files.length} file(s)`);
 
     // Keep a flash copy for reset
@@ -253,6 +352,15 @@ export class RP2040Simulator {
     }
     this.pioStepAccum = 0;
 
+    // The PIO-peripheral hooks were installed on the RP2040 instance that
+    // existed at board-creation time. loadMicroPython just swapped in a fresh
+    // RP2040, so those hooks now point at the discarded instance. Re-install
+    // them on the new PIO FIFOs or the peripheral never sees the bus traffic.
+    if (this.pioPeripheral) {
+      this.pioHookedFifos = [];
+      this.installPioPeripheralHooks();
+    }
+
     this.setupGpioListeners();
     this.micropythonMode = true;
     console.log('[RP2040] MicroPython ready');
@@ -266,61 +374,53 @@ export class RP2040Simulator {
   // ── Pico W (CYW43439) attachment ────────────────────────────────────────
 
   /**
-   * Wire a CYW43 chip emulator onto this RP2040 instance. Should only be
-   * called for ``pi-pico-w`` boards. Idempotent — calling twice is a no-op.
+   * Attach a PIO/gSPI bus peripheral to this RP2040 instance (e.g. the pro
+   * overlay's CYW43 WiFi co-processor). Should only be called once per board.
+   * Idempotent — calling twice is a no-op. Returns null when no factory is
+   * installed (OSS build) or the factory declines (unsupported board / a free
+   * user) — in which case the board simulates as a plain Pico.
    *
-   * The emulator observes outbound PIO TX FIFO writes (which the cyw43
-   * driver uses to bit-bang the gSPI bus) and feeds back synthesised
-   * responses. When a Cyw43Bridge is supplied, outbound Ethernet frames
-   * are forwarded to the backend network bridge and inbound packets
-   * coming back from the bridge are queued for the chip to deliver.
+   * The peripheral observes outbound PIO TX FIFO writes (which the driver
+   * bit-bangs onto the gSPI bus) and feeds back synthesised reply words; the
+   * fragile FIFO plumbing + GPIO24 host-wake lifecycle stay here.
    */
-  attachCyw43(bridge: Cyw43Bridge | null = null): Cyw43Emulator {
-    if (this.cyw43) return this.cyw43;
-    const emu = new Cyw43Emulator();
-    const sniffer = new PioBusSniffer();
-    this.cyw43 = emu;
-    this.cyw43Sniffer = sniffer;
-    this.cyw43Bridge = bridge;
+  attachPioPeripheral(boardKind: string, boardId: string): PioPeripheral | null {
+    if (this.pioPeripheral) return this.pioPeripheral;
+    const peripheral = createPioPeripheral(boardKind, boardId);
+    if (!peripheral) return null;
+    this.pioPeripheral = peripheral;
 
-    emu.onLed((ev: LedEvent) => {
-      this.onPicoWLed?.(ev.on);
-    });
-    emu.onConnect((ev) => {
-      this.onPicoWWifiUp?.(ev.ssid);
-    });
-    emu.onPacketOut((ev: PacketOutEvent) => {
-      this.cyw43Bridge?.sendPacket(ev.ether);
+    // Drive WL_HOST_WAKE (GPIO24, active-high). The driver gates poll_device on
+    // this pin until it has received its first packet, so without it the first
+    // IOCTL response is never read and wifi_on stalls.
+    peripheral.onHostWake((active: boolean) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      try { (this.rp2040 as any)?.gpio?.[24]?.setInputValue(active); } catch { /* noop */ }
     });
 
-    if (bridge) {
-      bridge.onPacketIn = (p) => emu.injectPacket(p.ether);
-    }
-
-    this.installCyw43PioHooks();
-    return emu;
+    this.installPioPeripheralHooks();
+    return peripheral;
   }
 
-  /** Detach the CYW43 emulator (called from teardown). */
-  detachCyw43(): void {
-    for (const h of this.cyw43HookedFifos) h.restore();
-    this.cyw43HookedFifos = [];
-    this.cyw43 = null;
-    this.cyw43Sniffer = null;
-    this.cyw43Bridge = null;
+  /** Detach the PIO peripheral (called from teardown). */
+  detachPioPeripheral(): void {
+    for (const h of this.pioHookedFifos) h.restore();
+    this.pioHookedFifos = [];
+    try { this.pioPeripheral?.detach?.(); } catch { /* noop */ }
+    this.pioPeripheral = null;
   }
 
   /** Read access for tests / debug panels. */
-  getCyw43(): Cyw43Emulator | null { return this.cyw43; }
+  getPioPeripheral(): PioPeripheral | null { return this.pioPeripheral; }
 
   /**
-   * Hook every PIO state machine's ``txFIFO.push`` so the CYW43 emulator
-   * sees every word the cyw43 driver bit-bangs onto the bus, and
-   * mirror responses back into ``rxFIFO`` so the driver's reads land
-   * without needing a real chip on the wire.
+   * Hook every PIO state machine's txFIFO/rxFIFO so the attached PIO
+   * peripheral sees every word the driver bit-bangs onto the bus and its
+   * reply words land in the RX FIFO without a real chip on the wire.
    */
-  private installCyw43PioHooks(): void {
-    if (!this.rp2040 || !this.cyw43 || !this.cyw43Sniffer) return;
+  private installPioPeripheralHooks(): void {
+    if (!this.rp2040 || !this.pioPeripheral) return;
+    const peripheral = this.pioPeripheral;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pios: any[] = (this.rp2040 as any).pio;
     for (const pio of pios) {
@@ -329,42 +429,110 @@ export class RP2040Simulator {
         const tx = sm.txFIFO;
         const rx = sm.rxFIFO;
         if (!tx || !rx) continue;
+        // Make the TX FIFO NON-DROPPING (head-pointer queue). rp2040js's 4-deep
+        // FIFO silently drops words once full, which truncates the 260-word F2
+        // IOCTL writes (clm_load, the connect ioctls) so the chip never sees a
+        // complete frame. Real hardware paces the DMA with DREQ and never drops.
+        // To keep the ~224 KB firmware download cheap we still discard the bulk
+        // of each firmware/backplane write (inDiscardableWriteData): the PIO
+        // drains the few kept words, raises TXSTALL, and the driver moves on.
+        const q: number[] = [];
+        let head = 0;
+        const origFull = Object.getOwnPropertyDescriptor(tx, 'full');
+        const origEmpty = Object.getOwnPropertyDescriptor(tx, 'empty');
+        const origItem = Object.getOwnPropertyDescriptor(tx, 'itemCount');
         const origPush: (v: number) => void = tx.push.bind(tx);
+        const origPull: () => number = tx.pull.bind(tx);
+        const origPeek = tx.peek?.bind(tx);
+        const origReset = tx.reset?.bind(tx);
+        Object.defineProperty(tx, 'full', { get: () => false, configurable: true });
+        Object.defineProperty(tx, 'empty', { get: () => head >= q.length, configurable: true });
+        Object.defineProperty(tx, 'itemCount', { get: () => q.length - head, configurable: true });
+        tx.peek = () => (head < q.length ? q[head] : 0);
+        tx.reset = () => { q.length = 0; head = 0; };
         tx.push = (value: number) => {
-          // Feed the gSPI sniffer; if the command produces a response,
-          // surface it word-by-word into the rxFIFO so the driver's
-          // `pull` instruction reads it back.
-          this.feedCyw43Word(value);
-          return origPush(value);
+          if (peripheral.inDiscardableWriteData()) {
+            if (q.length - head < 4) q.push(value >>> 0); // keep a few so the PIO TXSTALLs
+            return;
+          }
+          // Feed the peripheral; commands that produce a response queue it
+          // for on-demand delivery (see the rxFIFO.pull hook below).
+          this.feedPioWord(value);
+          q.push(value >>> 0);
         };
-        this.cyw43HookedFifos.push({
-          restore: () => { tx.push = origPush; },
+        tx.pull = () => {
+          if (head >= q.length) return 0;
+          const v = q[head++];
+          if (head > 8192 && head * 2 > q.length) { q.splice(0, head); head = 0; } // compact
+          return v;
+        };
+        this.pioHookedFifos.push({
+          restore: () => {
+            if (origFull) Object.defineProperty(tx, 'full', origFull); else delete tx.full;
+            if (origEmpty) Object.defineProperty(tx, 'empty', origEmpty); else delete tx.empty;
+            if (origItem) Object.defineProperty(tx, 'itemCount', origItem); else delete tx.itemCount;
+            tx.push = origPush;
+            tx.pull = origPull;
+            if (origPeek) tx.peek = origPeek;
+            if (origReset) tx.reset = origReset;
+          },
+        });
+        // Reset the gSPI framing at each transfer boundary. cyw43_spi_transfer
+        // does pio_sm_restart before pushing the count words, so this keeps the
+        // sniffer deterministic even across the firmware-stream fast-path.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (sm as any).restart === 'function') {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const origRestart: () => void = (sm as any).restart.bind(sm);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (sm as any).restart = () => { peripheral.resetFraming(); return origRestart(); };
+          this.pioHookedFifos.push({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            restore: () => { (sm as any).restart = origRestart; },
+          });
+        }
+        // Serve the chip's response when the driver's DMA actually reads the
+        // RX FIFO. Pushing into the FIFO eagerly raced the async DMA/PIO and
+        // the data arrived late or was lost; serving on pull keeps it in lock
+        // step with the driver.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const origRxPull: () => number = (rx as any).pull.bind(rx);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (rx as any).pull = () =>
+          this.pioRxQueue.length > 0 ? (this.pioRxQueue.shift() as number) : origRxPull();
+        this.pioHookedFifos.push({
+          restore: () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (rx as any).pull = origRxPull;
+          },
         });
       }
     }
+    // Re-sync WL_HOST_WAKE: loadMicroPython swaps in a fresh RP2040 (GPIO reset
+    // to low) while the chip's frame queue — and thus its host-wake level —
+    // persists. onHostWake only fires on changes, so push the current level now.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.rp2040 as any)?.gpio?.[24]?.setInputValue(peripheral.hostWakeLevel());
+    } catch { /* noop */ }
   }
 
-  private cyw43RxQueue: number[] = [];
-  private feedCyw43Word(word: number): void {
-    if (!this.cyw43Sniffer || !this.cyw43) return;
-    for (const ev of this.cyw43Sniffer.feedWord(word)) {
-      if (ev.kind === 'payload') {
-        const reply = this.cyw43.onCommand(ev.cmd, ev.payload);
-        if (reply && reply.length > 0) this.queueCyw43Reply(reply);
-      }
+  private pioRxQueue: number[] = [];
+  private feedPioWord(word: number): void {
+    if (!this.pioPeripheral) return;
+    for (const reply of this.pioPeripheral.feedWord(word)) {
+      if (reply.length > 0) this.queuePioReply(reply);
     }
-    // Drain queued reply words into any state machine that has space.
-    this.drainCyw43RxIntoSomeSM();
   }
 
-  private queueCyw43Reply(reply: Uint8Array): void {
+  private queuePioReply(reply: Uint8Array): void {
     // 32-bit big-endian repacking with the same halfword swap the PIO
     // program does on input. We push host-byte-order words; the SM's
     // shift register puts them on the wire LSB-first per the gSPI spec.
     for (let i = 0; i + 4 <= reply.length; i += 4) {
       const w =
         ((reply[i + 3] << 24) | (reply[i + 2] << 16) | (reply[i + 1] << 8) | reply[i]) >>> 0;
-      this.cyw43RxQueue.push(w);
+      this.pioRxQueue.push(w);
     }
     if (reply.length % 4 !== 0) {
       // Pad to 4 bytes with zeros — the driver discards trailing bytes
@@ -372,24 +540,7 @@ export class RP2040Simulator {
       const tail = reply.subarray(reply.length - (reply.length % 4));
       let w = 0;
       for (let i = 0; i < tail.length; i++) w |= tail[i] << (i * 8);
-      this.cyw43RxQueue.push(w >>> 0);
-    }
-  }
-
-  private drainCyw43RxIntoSomeSM(): void {
-    if (!this.rp2040 || this.cyw43RxQueue.length === 0) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pios: any[] = (this.rp2040 as any).pio;
-    for (const pio of pios) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const sm of pio.machines as any[]) {
-        const rx = sm.rxFIFO;
-        if (!rx) continue;
-        while (this.cyw43RxQueue.length > 0 && !rx.full) {
-          rx.push(this.cyw43RxQueue.shift());
-        }
-        if (this.cyw43RxQueue.length === 0) return;
-      }
+      this.pioRxQueue.push(w >>> 0);
     }
   }
 
@@ -409,7 +560,7 @@ export class RP2040Simulator {
     this.rp2040 = new RP2040();
 
     // Suppress noisy internal logs (only show errors)
-    this.rp2040.logger = new ConsoleLogger(LogLevel.Error);
+    this.rp2040.logger = new ConsoleLogger(LogLevel.Error, false);
 
     // Load RP2040 B1 bootrom — needed for proper boot sequence
     this.rp2040.loadBootrom(bootromB1);
@@ -626,67 +777,22 @@ export class RP2040Simulator {
     }
 
     this.running = true;
+    this.lastTimestamp = 0;
+    this.idleDetector.reset();
     console.log('[RP2040] Starting simulation at 125 MHz...');
 
-    const execute = () => {
+    const execute = (timestamp: number) => {
       if (!this.running || !this.rp2040) return;
 
-      const cyclesTarget = Math.floor(CYCLES_PER_FRAME * this.speed);
-      const { core } = this.rp2040;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const clock = (this.rp2040 as any).clock;
+      // Derive this frame's cycle budget from the MEASURED wall-clock delta
+      // (mirrors AVRSimulator) so the sim cannot silently run in slow motion
+      // by assuming a perfect 60 fps. First frame falls back to one frame; the
+      // upper clamp (paused/backgrounded tab) is applied in runFrameForTime.
+      const deltaMs = this.lastTimestamp === 0 ? 1000 / FPS : timestamp - this.lastTimestamp;
+      this.lastTimestamp = timestamp;
 
       try {
-        let cyclesDone = 0;
-        const pioDiv = this.getPIOClockDiv();
-        while (cyclesDone < cyclesTarget) {
-          if (core.waiting) {
-            if (clock) {
-              const jump: number = clock.nanosToNextAlarm;
-              if (jump <= 0) {
-                // No clock alarms — step PIO so it can unblock the CPU
-                // (e.g. PIO consuming FIFO data may generate an interrupt)
-                this.stepPIO();
-                break;
-              }
-              const jumped = Math.ceil(jump / CYCLE_NANOS);
-              const pioSteps = Math.floor(jumped / pioDiv);
-              // Advance clock incrementally per PIO step so GPIO transitions
-              // get accurate timestamps (not all lumped at the end of the jump).
-              const nanoPerPioStep = pioDiv * CYCLE_NANOS;
-              const maxSteps = Math.min(pioSteps, 50000);
-              let nanosStepped = 0;
-              for (let i = 0; i < maxSteps; i++) {
-                clock.tick(nanoPerPioStep);
-                nanosStepped += nanoPerPioStep;
-                this.totalCycles += pioDiv;
-                this.stepPIO();
-              }
-              // Tick any remaining nanoseconds not covered by PIO steps
-              const remaining = jump - nanosStepped;
-              if (remaining > 0) {
-                clock.tick(remaining);
-                this.totalCycles += Math.ceil(remaining / CYCLE_NANOS);
-              }
-              cyclesDone += jumped;
-              this.flushScheduledPinChanges();
-            } else {
-              break;
-            }
-          } else {
-            const cycles: number = core.executeInstruction();
-            if (clock) clock.tick(cycles * CYCLE_NANOS);
-            cyclesDone += cycles;
-            this.totalCycles += cycles;
-            // Step PIO synchronously at the PIO clock rate
-            this.pioStepAccum += cycles;
-            while (this.pioStepAccum >= pioDiv) {
-              this.pioStepAccum -= pioDiv;
-              this.stepPIO();
-            }
-            this.flushScheduledPinChanges();
-          }
-        }
+        this.runFrameForTime(deltaMs);
       } catch (error) {
         console.error('[RP2040] Simulation error:', error);
         this.stop();
@@ -697,6 +803,117 @@ export class RP2040Simulator {
     };
 
     this.animationFrame = requestAnimationFrame(execute);
+  }
+
+  /**
+   * Run one frame's worth of simulation for `deltaMs` of wall-clock time.
+   * Returns counters for tests. Keeps simulated time locked to wall-clock:
+   * idle spins (busy-wait `delay()`) and WFI sleeps advance the clock instead
+   * of executing every idle cycle, so timing stays correct even when the host
+   * cannot emulate 125 MHz in real time. Exposed (not private) so the
+   * real-time scheduler can be driven deterministically in tests without rAF.
+   */
+  runFrameForTime(deltaMs: number): { cyclesAdvanced: number; instructionsExecuted: number } {
+    if (!this.rp2040) return { cyclesAdvanced: 0, instructionsExecuted: 0 };
+    // Guard against NaN/negative deltas and clamp the upper bound so a single
+    // frame never simulates more than MAX_DELTA_MS of CPU time (a paused or
+    // backgrounded tab must not trigger a multi-second catch-up burst).
+    let dt = deltaMs > 0 ? deltaMs : 1000 / FPS;
+    if (dt > MAX_DELTA_MS) dt = MAX_DELTA_MS;
+    const cyclesTarget = Math.max(1, Math.floor(CYCLES_PER_MS * dt * this.speed));
+    const { core } = this.rp2040;
+    const clock = (this.rp2040 as unknown as { clock?: SimClock }).clock ?? null;
+    const pioDiv = this.getPIOClockDiv();
+    const gpioSnapshot = () => this.rp2040!.gpioValues;
+
+    let cyclesDone = 0;
+    let instructionsExecuted = 0;
+    while (cyclesDone < cyclesTarget) {
+      if (core.waiting) {
+        // CPU asleep (WFI/WFE): jump to the next timer alarm, but never past
+        // this frame's wall-clock budget, so a long sleep advances at real
+        // time across frames rather than leaping ahead.
+        if (!clock || clock.nanosToNextAlarm <= 0) {
+          this.stepPIO(); // nothing scheduled to wake it this frame
+          break;
+        }
+        const jumped = this.advanceClock(cyclesTarget - cyclesDone, pioDiv, clock);
+        if (jumped <= 0) break;
+        cyclesDone += jumped;
+      } else if (this.idleDetector.observe(core.PC, gpioSnapshot)) {
+        // Detected a side-effect-free busy-wait spin (e.g. delay()): advance
+        // the clock over it instead of grinding every cycle. Capped at the
+        // next alarm/scheduled pin change inside advanceClock, and to a small
+        // slice so the firmware re-checks its deadline (bounds overshoot).
+        const budget = Math.min(cyclesTarget - cyclesDone, IDLE_SLICE_CYCLES);
+        const jumped = this.advanceClock(budget, pioDiv, clock);
+        if (jumped <= 0) {
+          cyclesDone += this.execOne(core, clock, pioDiv);
+          instructionsExecuted++;
+        } else {
+          cyclesDone += jumped;
+          this.idleDetector.noteElided();
+        }
+      } else {
+        cyclesDone += this.execOne(core, clock, pioDiv);
+        instructionsExecuted++;
+      }
+    }
+    return { cyclesAdvanced: cyclesDone, instructionsExecuted };
+  }
+
+  /** Execute one ARM instruction in the production loop, advancing the clock
+   *  and stepping PIO. Returns the cycles it took. */
+  private execOne(
+    core: { executeInstruction(): number },
+    clock: SimClock | null,
+    pioDiv: number,
+  ): number {
+    const cycles: number = core.executeInstruction();
+    if (clock) clock.tick(cycles * CYCLE_NANOS);
+    this.totalCycles += cycles;
+    this.pioStepAccum += cycles;
+    while (this.pioStepAccum >= pioDiv) {
+      this.pioStepAccum -= pioDiv;
+      this.stepPIO();
+    }
+    this.flushScheduledPinChanges();
+    return cycles;
+  }
+
+  /**
+   * Advance the simulated clock by up to `budgetCycles` WITHOUT executing
+   * instructions, stepping PIO at the PIO clock rate so GPIO timestamps stay
+   * accurate. Never advances past the next timer alarm or the next scheduled
+   * pin change (so those still fire at their exact simulated time). Returns
+   * the number of cycles actually advanced.
+   */
+  private advanceClock(budgetCycles: number, pioDiv: number, clock: SimClock | null): number {
+    if (budgetCycles <= 0 || !clock) return 0;
+    const alarmNanos: number = clock.nanosToNextAlarm ?? 0;
+    const alarmCycles = alarmNanos > 0 ? Math.ceil(alarmNanos / CYCLE_NANOS) : Infinity;
+    const nextPin =
+      this.scheduledPinChanges.length > 0
+        ? this.scheduledPinChanges[0].cycle - this.totalCycles
+        : Infinity;
+    let jumped = Math.min(budgetCycles, alarmCycles, nextPin > 0 ? nextPin : Infinity);
+    if (!Number.isFinite(jumped) || jumped <= 0) return 0;
+    jumped = Math.ceil(jumped);
+
+    const totalNanos = jumped * CYCLE_NANOS;
+    const nanoPerPioStep = pioDiv * CYCLE_NANOS;
+    const pioSteps = Math.min(Math.floor(jumped / pioDiv), 50000);
+    let nanosStepped = 0;
+    for (let i = 0; i < pioSteps; i++) {
+      clock.tick(nanoPerPioStep);
+      nanosStepped += nanoPerPioStep;
+      this.stepPIO();
+    }
+    const remaining = totalNanos - nanosStepped;
+    if (remaining > 0) clock.tick(remaining);
+    this.totalCycles += jumped;
+    this.flushScheduledPinChanges();
+    return jumped;
   }
 
   stop(): void {
@@ -710,6 +927,8 @@ export class RP2040Simulator {
     // typically cleared on stop/start, so the previous run's "seeded"
     // flag would suppress the baseline sample for the next session.
     this.uartTxSeeded = [false, false];
+    this.lastTimestamp = 0;
+    this.idleDetector.reset();
     console.log('[RP2040] Simulation stopped');
   }
 
@@ -717,11 +936,12 @@ export class RP2040Simulator {
     this.stop();
     this.totalCycles = 0;
     this.scheduledPinChanges = [];
+    this.idleDetector.reset();
     if (this.rp2040 && this.flashCopy) {
       if (this.micropythonMode) {
         // In MicroPython mode, restore the full flash snapshot (UF2 + LittleFS)
         this.rp2040 = new RP2040();
-        this.rp2040.logger = new ConsoleLogger(LogLevel.Error);
+        this.rp2040.logger = new ConsoleLogger(LogLevel.Error, false);
         this.rp2040.loadBootrom(bootromB1);
         this.rp2040.flash.set(this.flashCopy);
         this.rp2040.core.PC = 0x10000000;

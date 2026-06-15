@@ -16,7 +16,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Request, Response
 
-from app.core.hooks import iot_gateway_gate
+from app.core.hooks import dispatch_gateway_proxy, iot_gateway_gate
 from app.services.esp32_lib_manager import esp_lib_manager
 
 router = APIRouter()
@@ -66,14 +66,27 @@ async def gateway_proxy(client_id: str, path: str, request: Request) -> Response
             media_type='application/json',
         )
 
+    # ── ESP32: the server runs in QEMU, reachable via slirp hostfwd. ──
     inst = esp_lib_manager.get_instance(client_id)
-    if not inst or not inst.wifi_enabled or inst.wifi_hostfwd_port == 0:
-        return Response(
-            content='{"error":"No WiFi-enabled ESP32 instance found for this client"}',
-            status_code=404,
-            media_type='application/json',
-        )
+    if inst and inst.wifi_enabled and inst.wifi_hostfwd_port != 0:
+        return await _proxy_esp32(inst, path, request)
 
+    # ── Pico W (and any other overlay-provided board): the server runs in the
+    #    browser-side lwIP, reachable only by the overlay proxying TCP into the
+    #    chip over the WS bridge. OSS has no resolver -> falls through to 404. ──
+    overlay_resp = await dispatch_gateway_proxy(client_id, path, request)
+    if overlay_resp is not None:
+        return overlay_resp
+
+    return Response(
+        content='{"error":"No WiFi-enabled board found for this client. Make sure your sketch connected to WiFi and started a server on port 80."}',
+        status_code=404,
+        media_type='application/json',
+    )
+
+
+async def _proxy_esp32(inst, path: str, request: Request) -> Response:
+    """Reverse-proxy to an ESP32 web server via QEMU slirp hostfwd."""
     target_url = f'http://127.0.0.1:{inst.wifi_hostfwd_port}/{path}'
     body = await request.body()
 

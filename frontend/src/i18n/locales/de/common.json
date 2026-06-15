@@ -405,5 +405,30 @@
         "failed": "Registrierung fehlgeschlagen."
       }
     }
+  },
+  "quotaModal": {
+    "titleFree": "Du hast das heutige kostenlose Limit erreicht",
+    "titlePaid": "Du hast dein tägliches Limit erreicht",
+    "bodyFree": "Kostenlose Konten erhalten {{cap}} KI-Nachrichten pro Tag. Pro ($15/Monat) gibt dir {{proCap}}/Tag — {{multiplier}}× das Limit. Oder warte, bis dein Kontingent zurückgesetzt wird.",
+    "bodyPaid": "Dein {{plan}}-Plan erlaubt {{cap}} Nachrichten pro Tag. Upgrade auf eine höhere Stufe oder warte auf die Rücksetzung.",
+    "today": "Heute",
+    "thisMonth": "Diesen Monat",
+    "resets": "Rücksetzung",
+    "ctaUpgrade": "Upgrade auf Pro — $15/Monat",
+    "ctaSeePlans": "Pläne ansehen",
+    "ctaWait": "Bis zur Rücksetzung warten"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "Sichtbarkeit konnte nicht aktualisiert werden — bitte versuche es erneut.",
+      "visibility": {
+        "publicLabel": "Öffentlich",
+        "publicHint": "Jeder kann dieses Projekt auf velxio.dev finden.",
+        "unlistedLabel": "Nicht gelistet",
+        "unlistedHint": "Versteckt vor Suche und Galerie — nur über den Freigabelink zugänglich.",
+        "privateLabel": "Privat",
+        "privateHint": "Nur du kannst dieses Projekt sehen."
+      }
+    }
   }
 }

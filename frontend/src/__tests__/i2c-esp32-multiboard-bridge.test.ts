@@ -69,7 +69,7 @@ vi.mock('../simulation/RP2040Simulator', () => ({
     this.reset = vi.fn();
     this.loadBinary = vi.fn();
     this.setPinState = vi.fn();
-    this.attachCyw43 = vi.fn();
+    this.attachPioPeripheral = vi.fn();
     this.spi = { onByte: null, completeTransfer: vi.fn() };
     const buses = busFactories.make!(2) as any[];
     this.getI2CBus = (bus: 0 | 1 = 0) => buses[bus];

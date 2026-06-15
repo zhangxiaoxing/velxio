@@ -25,7 +25,6 @@
 import { describe, it, expect } from 'vitest';
 import { hundredDaysExamples } from '../data/examples-100-days';
 import { epaperExamples } from '../data/examples-displays-epaper';
-import { picowWifiExamples } from '../data/examples-picow-wifi';
 import { circuitExamples } from '../data/examples-circuits';
 import { exampleToBuildNetlistInput } from '../utils/exampleToBuildNetlistInput';
 import { solveInput } from './helpers/solveInput';
@@ -91,5 +90,4 @@ function buildSuite(bucket: string, examples: ExampleProject[]): void {
 
 buildSuite('100-days', hundredDaysExamples);
 buildSuite('epaper-displays', epaperExamples);
-buildSuite('picow-wifi', picowWifiExamples);
 buildSuite('circuits', circuitExamples);

@@ -7,7 +7,33 @@ on:
     branches: [master, main]
 
 jobs:
+  # Gate: repository secrets (the build license key) are NOT exposed to
+  # workflow runs triggered by pull_request from a FORK. Without the key the
+  # gated download in the e2e job can only `exit 1`, turning every external
+  # contributor's PR red for a reason unrelated to their change. This tiny job
+  # checks whether the key is present; if not, the real e2e job is SKIPPED
+  # (neutral) instead of failed. Maintainer pushes and same-repo branches —
+  # which do receive the secret — still run the full suite.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run_e2e: ${{ steps.check.outputs.run_e2e }}
+    steps:
+      - name: Check for build license key (absent on fork PRs)
+        id: check
+        env:
+          VELXIO_LICENSE_KEY: ${{ secrets.VELXIO_BUILD_LICENSE_KEY }}
+        run: |
+          if [ -n "$VELXIO_LICENSE_KEY" ]; then
+            echo "run_e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_e2e=false" >> "$GITHUB_OUTPUT"
+            echo "::notice ::VELXIO_BUILD_LICENSE_KEY unavailable (fork PR or unset) — skipping the gated QEMU e2e suite instead of failing it. A maintainer push or same-repo branch runs it in full."
+          fi
+
   e2e:
+    needs: gate
+    if: needs.gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -50,14 +76,22 @@ jobs:
           mkdir -p $QEMU_DIR
           cd $QEMU_DIR
 
+          # Retry on transient blips: the binaries are served from velxio.dev,
+          # which has brief windows of unavailability during a deploy (the app
+          # container is recreated -> a few seconds of 502). Without retries a
+          # single blip mid-download fails the whole e2e job. --retry-all-errors
+          # covers 5xx (the deploy case), --retry-connrefused the cold-restart
+          # case; 5 x 10s buys ~50s, enough to ride out a container recreate.
+          RETRY="--retry 5 --retry-delay 10 --retry-all-errors --retry-connrefused --connect-timeout 15"
+
           echo "Downloading QEMU shared libraries..."
-          curl -fSL -o libqemu-xtensa.so  "$VELXIO_BINARY_BASE_URL/libqemu-xtensa-amd64?key=$VELXIO_LICENSE_KEY"
-          curl -fSL -o libqemu-riscv32.so "$VELXIO_BINARY_BASE_URL/libqemu-riscv32-amd64?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o libqemu-xtensa.so  "$VELXIO_BINARY_BASE_URL/libqemu-xtensa-amd64?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o libqemu-riscv32.so "$VELXIO_BINARY_BASE_URL/libqemu-riscv32-amd64?key=$VELXIO_LICENSE_KEY"
 
           echo "Downloading ROM files..."
-          curl -fSL -o esp32-v3-rom.bin     "$VELXIO_BINARY_BASE_URL/esp32-v3-rom?key=$VELXIO_LICENSE_KEY"
-          curl -fSL -o esp32-v3-rom-app.bin "$VELXIO_BINARY_BASE_URL/esp32-v3-rom-app?key=$VELXIO_LICENSE_KEY"
-          curl -fSL -o esp32c3-rom.bin      "$VELXIO_BINARY_BASE_URL/esp32c3-rom?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o esp32-v3-rom.bin     "$VELXIO_BINARY_BASE_URL/esp32-v3-rom?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o esp32-v3-rom-app.bin "$VELXIO_BINARY_BASE_URL/esp32-v3-rom-app?key=$VELXIO_LICENSE_KEY"
+          curl -fSL $RETRY -o esp32c3-rom.bin      "$VELXIO_BINARY_BASE_URL/esp32c3-rom?key=$VELXIO_LICENSE_KEY"
 
           chmod +x libqemu-xtensa.so libqemu-riscv32.so
           ls -lh .

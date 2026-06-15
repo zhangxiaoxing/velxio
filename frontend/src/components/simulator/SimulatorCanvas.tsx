@@ -1,5 +1,6 @@
 import { useSimulatorStore, getEsp32Bridge } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
+import { openDeviceGateway } from '../../lib/openDeviceGateway';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Undo2, Redo2 } from 'lucide-react';
@@ -22,6 +23,7 @@ import { BoardOnCanvas } from './BoardOnCanvas';
 import { CanvasMinimap } from './CanvasMinimap';
 import { PartSimulationRegistry } from '../../simulation/parts';
 import { PROPERTY_CHANGE_EVENT, type PropertyChangeDetail } from '../../simulation/parts/partUtils';
+import { mountDigitalGateEngine } from '../../simulation/digital/digitalGateController';
 import { isSpiceMapped } from '../../simulation/spice/componentToSpice';
 import { PinOverlay } from './PinOverlay';
 import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
@@ -432,6 +434,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     window.addEventListener(PROPERTY_CHANGE_EVENT, onPropertyChange);
     return () => window.removeEventListener(PROPERTY_CHANGE_EVENT, onPropertyChange);
   }, []);
+
+  // Digital-gate engine (project/digital-gate-engine): when ?digitalgates=on and
+  // the board-less circuit is all-digital, evaluate the logic gates on the
+  // event-driven settle kernel and paint the LEDs, instead of ngspice B-sources.
+  // No-op when the flag is off (default).
+  useEffect(() => mountDigitalGateEngine(), []);
 
   // Auto-start/stop Pi bridges when simulation state changes
   const startBoard = useSimulatorStore((s) => s.startBoard);
@@ -1214,12 +1222,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     return () => cleanups.forEach((fn) => fn());
   }, [components, wires, boards]);
 
-  // Handle keyboard delete for components and boards
+  // Handle keyboard delete for the selected component
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip when the user is typing in an input/textarea/contenteditable —
       // otherwise Backspace inside the AI chat (or any future text field)
-      // also asks to delete the active board.
+      // would also delete the selected component.
       const t = e.target as HTMLElement | null;
       if (t) {
         const tag = t.tagName;
@@ -1232,15 +1240,20 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           // Recorded so the user can Ctrl+Z this back. Cascades wire removal too.
           recordRemoveComponent(selectedComponentId);
           setSelectedComponentId(null);
-        } else if (activeBoardId) {
-          setBoardToRemove(activeBoardId);
         }
+        // The board is intentionally NOT deletable via Delete/Backspace. It is
+        // always the "active" board (its code is shown in the editor), so keying
+        // off activeBoardId here popped the board-removal confirmation whenever
+        // the user pressed Delete to remove a wire, or after they had just
+        // deleted a component. Board removal stays on the explicit, deliberate
+        // paths: the right-click "Remove board" context menu and the touch
+        // pin-picker delete action.
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedComponentId, recordRemoveComponent, activeBoardId]);
+  }, [selectedComponentId, recordRemoveComponent]);
 
   // Handle component selection from modal
   const handleSelectComponent = (metadata: ComponentMetadata) => {
@@ -1774,10 +1787,21 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   // Keyboard handlers for wires
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape → cancel in-progress wire
+      // Escape → cancel in-progress wire (works even while a field is focused).
       if (e.key === 'Escape' && wireInProgress) {
         cancelWireCreation();
         return;
+      }
+      // Skip the rest when the user is typing in an input/textarea/select/
+      // contenteditable — otherwise Backspace in a text field (e.g. the AI chat)
+      // would delete the selected wire, and the color-shortcut keys below would
+      // hijack normal typing.
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) {
+          return;
+        }
       }
       // Delete / Backspace → remove selected wire (recorded for undo).
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedWireId) {
@@ -2159,12 +2183,23 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               <CameraToggle boardId={activeBoard.id} />
             )}
 
-            {/* WiFi status indicator (ESP32 boards only) */}
+            {/* WiFi status indicator + IoT-gateway launcher (ESP32 + Pico W) */}
             {activeBoard &&
-              isEsp32Kind(activeBoard.boardKind) &&
+              (isEsp32Kind(activeBoard.boardKind) ||
+                activeBoard.boardKind === 'pi-pico-w') &&
               activeBoard.wifiStatus &&
               (() => {
-                const status = activeBoard.wifiStatus.status;
+                // The Pico W virtual net assigns its IP deterministically when
+                // the sketch connects; the bridge reports 'started' carrying the
+                // IP. Treat that as got_ip so the badge matches the ESP32 (green,
+                // clickable → the same /api/gateway proxy).
+                const rawStatus = activeBoard.wifiStatus.status;
+                const status =
+                  activeBoard.boardKind === 'pi-pico-w' &&
+                  rawStatus === 'started' &&
+                  activeBoard.wifiStatus.ip
+                    ? 'got_ip'
+                    : rawStatus;
                 const hasIp = status === 'got_ip';
                 const sessionId = getTabSessionId();
                 const clientId = `${sessionId}::${activeBoard.id}`;
@@ -2184,7 +2219,13 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                     __velxio_iot_gateway_open_gate__?: () => boolean;
                   }).__velxio_iot_gateway_open_gate__;
                   if (gate && gate()) return;
-                  window.open(gatewayUrl, '_blank');
+                  // Pico W runs in THIS tab — a new tab would background and
+                  // freeze the emulation. Show the page in an in-app iframe.
+                  if (activeBoard.boardKind === 'pi-pico-w') {
+                    openDeviceGateway(gatewayUrl);
+                  } else {
+                    window.open(gatewayUrl, '_blank');
+                  }
                 };
                 return (
                   <span

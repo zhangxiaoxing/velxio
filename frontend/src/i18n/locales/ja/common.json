@@ -405,5 +405,30 @@
         "failed": "登録に失敗しました。"
       }
     }
+  },
+  "quotaModal": {
+    "titleFree": "本日の無料制限に達しました",
+    "titlePaid": "本日の制限に達しました",
+    "bodyFree": "無料アカウントは1日{{cap}}件のAIメッセージをご利用いただけます。Pro（月額$15）では1日{{proCap}}件（{{multiplier}}倍）にアップ。または、割り当てがリセットされるまでお待ちください。",
+    "bodyPaid": "{{plan}}プランでは1日{{cap}}件のメッセージをご利用いただけます。上位プランにアップグレードするか、リセットをお待ちください。",
+    "today": "今日",
+    "thisMonth": "今月",
+    "resets": "リセット",
+    "ctaUpgrade": "Proにアップグレード — 月額$15",
+    "ctaSeePlans": "プランを見る",
+    "ctaWait": "リセットまで待つ"
+  },
+  "editor": {
+    "share": {
+      "updateFailed": "公開設定を更新できませんでした。もう一度お試しください。",
+      "visibility": {
+        "publicLabel": "公開",
+        "publicHint": "誰でもvelxio.devでこのプロジェクトを見つけられます。",
+        "unlistedLabel": "限定公開",
+        "unlistedHint": "検索やギャラリーに表示されず、共有リンク経由でのみアクセス可能です。",
+        "privateLabel": "非公開",
+        "privateHint": "あなただけがこのプロジェクトを見ることができます。"
+      }
+    }
   }
 }

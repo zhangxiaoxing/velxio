@@ -42,6 +42,7 @@ export interface ProjectResponse {
   components_json: string;
   wires_json: string;
   boards_json: string; // serialized BoardInstance[]
+  libraries_json?: string; // P2.4 — declared library manifest (compile scope)
   owner_username: string;
   created_at: string;
   updated_at: string;
@@ -62,6 +63,7 @@ export interface ProjectSaveData {
   components_json: string;
   wires_json: string;
   boards_json?: string; // serialized BoardInstance[]
+  libraries_json?: string; // P2.4 — declared library manifest (compile scope)
 }
 
 export async function getMyProjects(): Promise<ProjectResponse[]> {

@@ -8,7 +8,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.hooks import get_current_user_id, record_compile
+from app.core.hooks import (
+    get_current_user_id,
+    get_project_libraries,
+    resolve_compile_owner,
+    record_compile,
+)
 from app.services.arduino_cli import ArduinoCLIService
 from app.services.espidf_compiler import espidf_compiler
 
@@ -55,15 +60,24 @@ def _job_key(
     board_fqbn: str,
     board_options: dict | None = None,
     spiffs_files: list[dict] | None = None,
+    libraries: list[str] | None = None,
+    owner_id: str | None = None,
 ) -> str:
-    """Stable content hash of (files, board, options, spiffs) used as the
-    deduplication key.
+    """Stable content hash of (files, board, options, spiffs, libraries, owner)
+    used as the deduplication key.
 
     Excludes project_id (analytics-only — different projects with identical
     code should still dedup to one build). File order is normalised so the
     same set of files in any order produces the same key. Board options
     and SPIFFS files are included so a partition / scheme / file change
     queues a fresh build rather than serving the previous cached job.
+
+    `owner_id` is folded in ONLY when a manifest is present (P2.1f/P2.2): a
+    manifest may reference a per-OWNER custom library, so two different owners
+    with byte-identical sketch + board + manifest can resolve DIFFERENT library
+    bytes and must not dedup to one another's build. Index-only / no-manifest
+    compiles pass owner_id=None and keep cross-owner dedup (the cache is shared,
+    so the build is owner-independent).
     """
     h = hashlib.sha256()
     h.update(board_fqbn.encode())
@@ -84,6 +98,19 @@ def _job_key(
             h.update(b"\0")
             h.update(f["content_b64"].encode())
             h.update(b"\0")
+    if libraries:
+        # Manifest changes the resolved library set → different binary, so it
+        # must not dedup to a job built with a different manifest.
+        for name in sorted(libraries):
+            h.update(name.encode())
+            h.update(b"\0")
+    if owner_id:
+        # Per-owner custom-lib disambiguation (see docstring). Only set when a
+        # manifest is present, so it never perturbs the owner-independent
+        # index-only case.
+        h.update(b"owner:")
+        h.update(owner_id.encode())
+        h.update(b"\0")
     return h.hexdigest()
 
 
@@ -136,6 +163,11 @@ class CompileRequest(BaseModel):
     # User-uploaded files to bake into the SPIFFS partition (#162). Empty /
     # None means the SPIFFS region stays blank (current behaviour).
     spiffs_files: list[SpiffsFileBody] | None = None
+    # P2 — project library manifest (declared library names). When provided,
+    # ESP-IDF library resolution is SCOPED to this set: a user-installed lib is
+    # merged only if it's declared here, so a sketch never picks up an unrelated
+    # library from the shared dir. None / omitted = legacy scan-all (unchanged).
+    libraries: list[str] | None = None
 
 
 class CompileResponse(BaseModel):
@@ -148,6 +180,12 @@ class CompileResponse(BaseModel):
     stderr: str
     error: str | None = None
     core_install_log: str | None = None
+    # P2 — set when a manifest-scoped compile only succeeded after the
+    # scan-all fallback (i.e. the manifest is missing a dependency). The
+    # suggested map is {header: [candidate library names]} so the manifest
+    # can be auto-completed (P2.4) or the user prompted to add the lib.
+    manifest_incomplete: bool = False
+    manifest_suggested_libraries: dict | None = None
 
 
 def _classify_compile_error(stderr: str, error: str | None) -> str:
@@ -178,10 +216,69 @@ def _resolve_files(request: CompileRequest) -> list[dict[str, str]]:
     )
 
 
+def _bare_lib_names(names) -> set[str] | None:
+    """Strip a trailing @version (or @wokwi:hash) from each manifest name and
+    drop empties. None if nothing remains. See _resolve_compile_scope (P2.1h)."""
+    out = {n.split("@", 1)[0].strip() for n in names if n and n.split("@", 1)[0].strip()}
+    return out or None
+
+
+async def _resolve_compile_scope(
+    request: CompileRequest, requester_id: str | None
+) -> tuple[set[str] | None, str | None]:
+    """Resolve the per-compile library SCOPE + owner. Used identically by the
+    actual build (_run_compile) AND the async dedup key (compile_start) so the
+    two can never diverge — a divergence would let one owner be served another's
+    in-flight binary, or rebuild needlessly.
+
+    Manifest = resolution SCOPE for BOTH compile paths (ESP-IDF and arduino-cli /
+    AVR / RP2040 / ATtiny). Manifests are PER-BOARD (each board carries its own
+    velxio.json); the client sends the COMPILING board's manifest in
+    request.libraries, so it takes precedence (two boards in one project can
+    scope to different libraries). Fall back to the project-level manifest (read
+    server-side) only when the client sends none — an anonymous compile or an old
+    client. None/empty → legacy scan-all.
+
+    Owner = whose per-user custom libraries the manifest may reference: the
+    project OWNER for a saved project (so a shared/embed compile finds that
+    owner's libs) — but ONLY when the requester is the owner or the project is
+    shareable (public/unlisted), so a private project's custom libs are never
+    reachable by another user (resolve_compile_owner enforces this gate). Falls
+    back to the REQUESTER for an unsaved / private-non-owner / anon compile (the
+    libs they just uploaded are their own).
+    """
+    # Resolve the visibility-gated owner FIRST: a non-None result means the
+    # requester may read THIS project's server-side state (it is their own, or
+    # public/unlisted). That same gate decides whether the saved-project manifest
+    # may be honored — so a PRIVATE project's declared library NAMES are never
+    # exposed to a non-owner via the server-side fallback (symmetry with the
+    # owner-bytes gate; P2.2-sec).
+    gated_owner = await resolve_compile_owner(request.project_id, requester_id)
+
+    # P2.1h: strip a trailing @version from each manifest name. norm_name fuses
+    # the version digits into the name otherwise ("ArduinoJson@6.21.5" ->
+    # "arduinojson6215"), which misses the cache entry ("arduinojson") and forces
+    # a global-dir scan-all. The per-board manifest (boards_json[].libraries,
+    # which the client sends in request.libraries) is the path that still carries
+    # @version. We don't version-pin today, so the bare name is what resolves.
+    allowed_libraries: set[str] | None = None
+    if request.libraries:
+        allowed_libraries = _bare_lib_names(request.libraries)
+    elif gated_owner is not None:
+        project_libs = await get_project_libraries(request.project_id)
+        if project_libs:
+            allowed_libraries = _bare_lib_names(project_libs)
+
+    owner_id = gated_owner if gated_owner is not None else requester_id
+    return allowed_libraries, owner_id
+
+
 async def _run_compile(
     request: CompileRequest,
     files: list[dict[str, str]],
     progress_callback: Any = None,
+    requester_id: str | None = None,
+    scope: tuple[set[str] | None, str | None] | None = None,
 ) -> CompileResponse:
     """Do the actual compile (ESP-IDF for esp32:*, arduino-cli otherwise).
 
@@ -190,7 +287,17 @@ async def _run_compile(
     output is exposed via /api/compile/status/{job_id}'s `stdout` field.
     AVR / RP2040 builds via arduino-cli don't surface progress yet — those
     typically finish in seconds anyway.
+
+    `scope` is the pre-resolved (allowed_libraries, owner_id) from the async
+    path — passed so the build uses the SAME values the dedup key was built
+    from (no re-resolution, no divergence). The sync path passes None → we
+    resolve it here.
     """
+    if scope is None:
+        allowed_libraries, owner_id = await _resolve_compile_scope(request, requester_id)
+    else:
+        allowed_libraries, owner_id = scope
+
     if request.board_fqbn.startswith("esp32:") and espidf_compiler.available:
         logger.info(f"[compile] Using ESP-IDF for {request.board_fqbn}")
         spiffs_dicts = (
@@ -202,6 +309,8 @@ async def _run_compile(
             progress_callback=progress_callback,
             board_options=request.board_options,
             spiffs_files=spiffs_dicts,
+            allowed_libraries=allowed_libraries,
+            owner_id=owner_id,
         )
         return CompileResponse(
             success=result["success"],
@@ -212,6 +321,8 @@ async def _run_compile(
             stdout=result.get("stdout", ""),
             stderr=result.get("stderr", ""),
             error=result.get("error"),
+            manifest_incomplete=result.get("manifest_incomplete", False),
+            manifest_suggested_libraries=result.get("manifest_suggested_libraries"),
         )
 
     # AVR, RP2040, and ESP32 fallback: use arduino-cli
@@ -227,9 +338,13 @@ async def _run_compile(
 
     # AVR / RP2040 / ATTiny path. `board_options` is accepted for API
     # symmetry but currently ignored — those toolchains don't expose the
-    # ESP32 partition / PSRAM knobs we're surfacing.
+    # ESP32 partition / PSRAM knobs we're surfacing. P2.1f: the manifest scope
+    # + owner now flow through so arduino-cli reads the content-addressed cache
+    # (via a scoped ARDUINO_DIRECTORIES_USER sketchbook) instead of the shared
+    # global volume.
     result = await arduino_cli.compile(
         files, request.board_fqbn, board_options=request.board_options,
+        allowed_libraries=allowed_libraries, owner_id=owner_id,
     )
     return CompileResponse(
         success=result["success"],
@@ -240,6 +355,10 @@ async def _run_compile(
         stderr=result.get("stderr", ""),
         error=result.get("error"),
         core_install_log=core_log if core_log else None,
+        # P2.1f: set when the scoped compile missed a header and recovered via a
+        # scan-all retry — signals the project's velxio.json manifest is
+        # incomplete (a needed / transitive lib not declared).
+        manifest_incomplete=result.get("manifest_incomplete", False),
     )
 
 
@@ -277,9 +396,15 @@ async def _compile_job(
     request: CompileRequest,
     files: list[dict[str, str]],
     user_id: str | None,
+    scope: tuple[set[str] | None, str | None] | None = None,
 ) -> None:
     """Background worker: acquire global semaphore + per-target lock, run the
     compile, store result in COMPILE_JOBS.
+
+    `scope` is the (allowed_libraries, owner_id) already resolved by
+    compile_start for the dedup key — threaded through so the build uses the
+    exact same scope the key was computed from (no second resolution that could
+    disagree under a transient owner-lookup failure).
 
     `state=pending` while waiting on either gate; transitions to `running`
     only once the actual build is about to start, so clients polling
@@ -323,6 +448,7 @@ async def _compile_job(
                 COMPILE_JOBS[job_id]["state"] = "running"
                 response = await _run_compile(
                     request, files, progress_callback=on_progress_line,
+                    requester_id=user_id, scope=scope,
                 )
         COMPILE_JOBS[job_id] = {
             "state": "done",
@@ -395,7 +521,7 @@ async def compile_sketch(
     files = _resolve_files(request)
     started = time.monotonic()
     try:
-        response = await _run_compile(request, files)
+        response = await _run_compile(request, files, requester_id=user_id)
     except Exception as e:
         await record_compile(
             user_id=user_id,
@@ -470,7 +596,19 @@ async def compile_start(
     spiffs_dicts = (
         [f.model_dump() for f in request.spiffs_files] if request.spiffs_files else None
     )
-    key = _job_key(files, request.board_fqbn, request.board_options, spiffs_dicts)
+    # Resolve the EXACT scope the build will use (client manifest else the
+    # server-side project manifest; owner else requester) — the SAME helper
+    # _run_compile uses — and fold it into the dedup key so the key matches the
+    # bytes the build actually produces. The resolved set + owner (owner only
+    # when a manifest applies, to preserve owner-independent dedup for index-
+    # only / no-manifest compiles) is then threaded into the job so the build
+    # never re-resolves and the two can't diverge.
+    allowed_libraries, owner_id = await _resolve_compile_scope(request, user_id)
+    key = _job_key(
+        files, request.board_fqbn, request.board_options, spiffs_dicts,
+        sorted(allowed_libraries) if allowed_libraries else None,
+        owner_id if allowed_libraries else None,
+    )
     existing_id = JOB_BY_KEY.get(key)
     if existing_id is not None:
         existing = COMPILE_JOBS.get(existing_id)
@@ -488,6 +626,7 @@ async def compile_start(
             request=request,
             files=files,
             user_id=user_id,
+            scope=(allowed_libraries, owner_id),
         ),
     )
     return CompileStartResponse(job_id=job_id)

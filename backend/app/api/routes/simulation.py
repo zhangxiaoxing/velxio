@@ -7,7 +7,7 @@ from app.services.esp_qemu_manager import esp_qemu_manager
 from app.services.board_access import board_allowed, PRO_BOARD_MESSAGE
 from app.services.esp32_lib_manager import esp_lib_manager
 from app.services.stm32_lib_manager import stm32_lib_manager
-from app.services.picow_net_bridge import picow_net_manager
+from app.core.hooks import dispatch_ws_sim_message
 
 
 def _find_free_port() -> int:
@@ -109,19 +109,22 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
                 firmware_b64 = msg_data.get('firmware_b64')
                 sensors      = msg_data.get('sensors', [])
                 wifi_enabled = bool(msg_data.get('wifi_enabled', False))
+                sd_card      = msg_data.get('sd_card')  # {'image_b64': ...} when a microSD is wired
                 fw_size_kb   = round(len(firmware_b64) * 0.75 / 1024) if firmware_b64 else 0
                 lib_available = _use_lib()
 
                 # Allocate a host port for WiFi hostfwd if WiFi is enabled
                 wifi_hostfwd_port = _find_free_port() if wifi_enabled else 0
 
-                logger.info('[%s] start_esp32 board=%s firmware=%dKB lib_available=%s sensors=%d wifi=%s hostfwd=%d',
+                sd_kb = round(len(sd_card['image_b64']) * 0.75 / 1024) if sd_card and sd_card.get('image_b64') else 0
+                logger.info('[%s] start_esp32 board=%s firmware=%dKB lib_available=%s sensors=%d wifi=%s hostfwd=%d sd=%dKB',
                             client_id, board, fw_size_kb, lib_available, len(sensors),
-                            wifi_enabled, wifi_hostfwd_port)
+                            wifi_enabled, wifi_hostfwd_port, sd_kb)
                 if lib_available:
                     await esp_lib_manager.start_instance(
                         client_id, board, qemu_callback, firmware_b64, sensors,
-                        wifi_enabled=wifi_enabled, wifi_hostfwd_port=wifi_hostfwd_port)
+                        wifi_enabled=wifi_enabled, wifi_hostfwd_port=wifi_hostfwd_port,
+                        sd_card=sd_card)
                 else:
                     logger.warning('[%s] libqemu-xtensa not available — using subprocess fallback', client_id)
                     esp_qemu_manager.start_instance(
@@ -192,25 +195,15 @@ async def simulation_websocket(websocket: WebSocket, client_id: str):
                 pin = int(msg_data.get('pin', 0))
                 stm32_lib_manager.sensor_detach(client_id, pin)
 
-            # ── Pico W (CYW43439) WiFi bridge ────────────────────────────
-            # The chip-side gSPI emulator lives in the frontend; this side
-            # forwards Layer-2 Ethernet frames to/from the host network.
-            # Mirrors the ESP32 path deliberately — see
-            # backend/app/services/picow_net_bridge.py for design notes.
-            elif msg_type == 'start_picow':
-                wifi_enabled = bool(msg_data.get('wifi_enabled', False))
-                logger.info('[%s] start_picow wifi=%s', client_id, wifi_enabled)
-                await picow_net_manager.start_instance(
-                    client_id, qemu_callback, wifi_enabled,
+            # ── Pico W (CYW43439) WiFi bridge — overlay-provided ─────────
+            # The chip-side gSPI emulator lives in the frontend; the userspace
+            # network stack AND the paid-plan gate live in the velxio-prod
+            # overlay (registered via register_ws_sim_handler). OSS has no
+            # handler, so these messages are ignored and a Pico W has no WiFi.
+            elif msg_type in ('start_picow', 'stop_picow', 'picow_packet_out'):
+                await dispatch_ws_sim_message(
+                    websocket, client_id, msg_type, msg_data, qemu_callback,
                 )
-
-            elif msg_type == 'stop_picow':
-                await picow_net_manager.stop_instance(client_id)
-
-            elif msg_type == 'picow_packet_out':
-                ether_b64 = msg_data.get('ether_b64', '')
-                if ether_b64:
-                    await picow_net_manager.deliver_packet_out(client_id, ether_b64)
 
             # ── ESP32 serial (UART 0 / 1 / 2) ───────────────────────────
             elif msg_type == 'esp32_serial_input':

@@ -727,13 +727,16 @@ export class AVRSimulator {
    */
   private pollPwmRegisters(): void {
     if (!this.cpu) return;
+    // Precise simulated time of this poll (sub-frame). Parts that schedule
+    // audio use it to recover the real onset time instead of the frame edge.
+    const timeMs = this.cpu.cycles / 16_000;
     const pins = this.pwmPins;
     for (let i = 0; i < pins.length; i++) {
       const { ocrAddr, pin } = pins[i];
       const ocrValue = this.cpu.data[ocrAddr];
       if (ocrValue !== this.lastOcrValues[i]) {
         this.lastOcrValues[i] = ocrValue;
-        this.pinManager.updatePwm(pin, ocrValue / 255);
+        this.pinManager.updatePwm(pin, ocrValue / 255, timeMs);
       }
     }
   }
@@ -786,9 +789,14 @@ export class AVRSimulator {
           avrInstruction(this.cpu); // Execute the AVR instruction
           this.cpu.tick(); // Update peripheral timers and cycles
           if (this.scheduledPinChanges.length > 0) this.flushScheduledPinChanges();
+          // Poll PWM sub-frame (~every 256 cycles = 16µs) so short OCR pulses
+          // (e.g. a metronome click that starts and ends within one 16ms frame)
+          // aren't merged or lost at the frame boundary. 256 cycles is far finer
+          // than any audible pulse yet light enough not to perturb frame pacing.
+          if ((i & 0xff) === 0) this.pollPwmRegisters();
         }
 
-        // Poll PWM registers every frame
+        // Final poll at the frame edge to catch the last change.
         this.pollPwmRegisters();
 
         // Try to drain any pending RX byte every frame. The primary

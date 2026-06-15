@@ -21,7 +21,6 @@ import { analogExamples } from '../data/examples-analog';
 import { digitalExamples } from '../data/examples-digital';
 import { hundredDaysExamples } from '../data/examples-100-days';
 import { epaperExamples } from '../data/examples-displays-epaper';
-import { picowWifiExamples } from '../data/examples-picow-wifi';
 import { circuitExamples } from '../data/examples-circuits';
 import type { ExampleProject } from '../data/examples';
 
@@ -30,7 +29,6 @@ const ALL_EXAMPLES: ExampleProject[] = [
   ...digitalExamples,
   ...hundredDaysExamples,
   ...epaperExamples,
-  ...picowWifiExamples,
   ...circuitExamples,
 ];
 

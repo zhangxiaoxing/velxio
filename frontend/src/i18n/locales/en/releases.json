@@ -128,5 +128,38 @@
       "title": "Try Velxio 2.5 now",
       "body": "Open the editor and start simulating — firmware and analog circuit, same canvas, zero setup."
     }
+  },
+  "v3": {
+    "versionBadge": "Version 3.0",
+    "heroAccent": "Retro CPUs, multi-board systems, full-circuit accuracy",
+    "heroSubtitle": "Velxio 3.0 is the biggest release yet. Program classic Z80, 8080 and 4004 processors, emulate MicroSD cards and ePaper displays, wire entire multi-board systems together, and undo any mistake on the canvas. Over 100 new examples — all free, open-source, and running in your browser.",
+    "tryV3": "Try Velxio 3.0",
+    "whatsNewHeading": "The biggest Velxio release yet",
+    "whatsNewLead": "Velxio 2.5 brought real analog circuits. Velxio 3.0 expands in every direction at once — new processors, storage and displays, true multi-board systems, sharper simulation, and the editor polish you have been asking for.",
+    "retroTitle": "Classic CPUs, fully programmable",
+    "retroBody": "Drop a Z80, 8080, 4004, 4040 or 8086 on the canvas, load your own ROM, and write assembly right in the editor — no host board required.",
+    "multiBoardTitle": "Whole systems, not single boards",
+    "multiBoardBody": "Wire UART, I2C, SPI and plain GPIO across every supported board. An ESP32 talking to a Pico talking to an Arduino, all solved on the same clock.",
+    "polishTitle": "Undo, minimap, live editing",
+    "polishBody": "Full undo/redo for every canvas action, a draggable minimap to navigate big builds, and drag-to-move parts while the simulation is running.",
+    "catalogHeading": "Everything new in 3.0",
+    "catalogLead": "A complete tour of the release — new processors, storage and displays, multi-board interconnect, simulation accuracy, performance, and over a hundred fresh examples.",
+    "examplesHeading": "100+ new gallery examples",
+    "examplesLead": "Pico Doom, ESP32-CAM previews, ePaper dashboards, retro-CPU demos, a 100 Days of IoT series, and dozens of analog circuits — every one a single click away.",
+    "outcomeHeading": "The outcome",
+    "outcomeLead": "Velxio 3.0 turns a board simulator into a full embedded-systems workbench: processors, peripherals, storage, displays and circuits, together in one browser tab.",
+    "outcome": {
+      "build": "Build complete systems",
+      "buildBody": "Multi-board projects with real UART/I2C/SPI links, MicroSD storage, and ePaper or webcam output — prototyped end to end before you touch hardware.",
+      "learn": "Learn from retro to modern",
+      "learnBody": "Trace a 4-bit Intel 4004 instruction by instruction, then jump to a 32-bit RISC-V or a quad-core ARM Linux board — the same canvas, the same tools.",
+      "openSource": "Still 100% open source",
+      "openSourceBody": "AGPL-3.0 on GitHub. No account, no cloud, no install. Fork it, self-host it, extend it."
+    },
+    "builtOnOssLead": "Velxio 3.0 stands on decades of open-source emulation and EDA work. Huge thanks to the maintainers of every project below.",
+    "bottom": {
+      "title": "Try Velxio 3.0 now",
+      "body": "Open the editor and start building — processors, peripherals, circuits and multi-board systems, with zero setup."
+    }
   }
 }

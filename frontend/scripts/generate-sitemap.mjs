@@ -57,6 +57,23 @@ const exampleIds = [
   ...parseExampleIds(circuitSource),
 ];
 
+// Pro overlay examples (e.g. the Pico W WiFi showcase) live in
+// <PRO_OVERLAY_PATH>/data/proExamples.ts and are spread into examples.ts via the
+// `@pro` alias at build time. This script parses example IDs from source TEXT
+// (it never executes the module), so it can't follow the alias — read the
+// overlay file directly when building with the overlay. OSS builds skip this.
+if (process.env.VITE_PRO_BUILD && process.env.PRO_OVERLAY_PATH) {
+  try {
+    const proSource = readFileSync(
+      resolve(process.env.PRO_OVERLAY_PATH, 'data/proExamples.ts'),
+      'utf-8',
+    );
+    exampleIds.push(...parseExampleIds(proSource));
+  } catch {
+    // No overlay examples file — nothing to add.
+  }
+}
+
 const exampleUrls = exampleIds.map((id) => ({
   loc: `${DOMAIN}/examples/${id}`,
   lastmod: TODAY,
@@ -64,6 +81,11 @@ const exampleUrls = exampleIds.map((id) => ({
   priority: 0.6,
 }));
 
+// Every <loc> carries a trailing slash. nginx serves the prerendered route
+// files as `<route>/index.html` and 301-redirects the slash-less form to add
+// the slash, so a slash-less sitemap URL is fetched as a redirect and filed
+// under "Page with redirect" in Search Console. Matching the served (slash)
+// form keeps the sitemap URL == canonical == 200, with no redirect hop.
 const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
@@ -71,7 +93,7 @@ ${indexable
   .map(
     (r) => `
   <url>
-    <loc>${DOMAIN}${r.path}</loc>
+    <loc>${DOMAIN}${r.path}${r.path.endsWith('/') ? '' : '/'}</loc>
     <lastmod>${TODAY}</lastmod>
     <changefreq>${r.changefreq ?? 'monthly'}</changefreq>
     <priority>${r.priority ?? 0.5}</priority>
@@ -82,7 +104,7 @@ ${exampleUrls
   .map(
     (u) => `
   <url>
-    <loc>${u.loc}</loc>
+    <loc>${u.loc}/</loc>
     <lastmod>${u.lastmod}</lastmod>
     <changefreq>${u.changefreq}</changefreq>
     <priority>${u.priority}</priority>

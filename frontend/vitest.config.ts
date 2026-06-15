@@ -22,11 +22,22 @@ import path from 'path';
  *     used by overlay tests (e.g. pro/.../snapshot.test.ts importing
  *     `@velxio/store/useEditorStore`) must be declared here too or
  *     test files explode with "Cannot find package '@velxio/...'".
+ *   - `@pro` likewise mirrors vite.config.ts: it resolves to the OSS no-op
+ *     stub by default, or the real overlay when VITE_PRO_BUILD +
+ *     PRO_OVERLAY_PATH are set. data/examples.ts statically imports
+ *     `@pro/data/proExamples`, so without this alias every test that loads
+ *     examples.ts would explode with "Cannot find package '@pro/...'".
  */
+const proOverlayPath =
+  process.env.VITE_PRO_BUILD && process.env.PRO_OVERLAY_PATH
+    ? path.resolve(process.env.PRO_OVERLAY_PATH)
+    : path.resolve(__dirname, 'src/__pro_stub__');
+
 export default defineConfig({
   resolve: {
     alias: {
       '@velxio': path.resolve(__dirname, 'src'),
+      '@pro': proOverlayPath,
     },
   },
   // Allow vitest to import test files / sources from outside this

@@ -6,7 +6,7 @@
     "tryV2": "尝试 Velxio 2.0",
     "joinDiscord": "加入 Discord",
     "boardsHeading": "19 块开发板。5 种架构。一个工具。",
-    "boardsLead": "从 8 位 AVR 到四核 ARM Linux — Velxio 2.0 在单个浏览器标签页中模拟每个主要嵌入式平台。",
+    "boardsLead": "从 8 位 AVR 到四核 ARM Linux — Velxio 2.0 在单个浏览器标签页中模拟每个主流嵌入式平台。",
     "multipleBoards": "一个电路中的多块开发板",
     "mixArchitectures": "混合架构",
     "mixArchitecturesBody": "将 ESP32 连接到 Raspberry Pi 3，将三个 Arduino 连接在一起，或将 Pico 与 ESP32-C3 组合。任何组合都可行。",
@@ -68,24 +68,24 @@
     "heroSubtitle": "通过 ngspice-WASM 进行实时模拟电路仿真，连接到 Arduino、ESP32 和 Raspberry Pi Pico。电阻、电容、运算放大器、晶体管、实时电流表和电压表 — 与您的固件协同仿真。免费、开源、无需安装。",
     "tryV25": "尝试 Velxio 2.5",
     "fullEmulation": "从纯数字到完整电路仿真",
-    "fullEmulationLead": "Velxio 2.0 完美仿真您的固件。Velxio 2.5 仿真其周围的电路 — 使用与专业 EDA 工具相同的 ngspice 引擎，完全在您的浏览器标签页中运行。",
+    "fullEmulationLead": "Velxio 2.0 完美模拟了您的固件。Velxio 2.5 模拟了其周围的电路 — 使用与专业 EDA 工具相同的 ngspice 引擎，完全在您的浏览器标签页中运行。",
     "notLinear": "不是线性近似",
     "notLinearBody": "Velxio 在每个时钟周期求解完整的改进节点分析。非线性器件 — 二极管、BJT、MOSFET、带饱和的运算放大器 — 表现如同真实器件，而非教科书理想化。",
     "realFirmware": "真实固件。真实电路。同一画布。",
-    "realFirmwareBody": "GPIO 引脚作为电压源驱动 SPICE 网络。ADC 输入读取求解的节点电压。analogRead() 返回电路实际产生的结果 — 而非模拟捷径。",
+    "realFirmwareBody": "GPIO 引脚作为电压源驱动 SPICE 网络。ADC 输入读取求解后的节点电压。analogRead() 返回电路实际产生的结果 — 而非模拟捷径。",
     "browserOffline": "100% 浏览器，100% 离线",
-    "browserOfflineBody": "ngspice 通过开源 eecircuit-engine 编译为 WebAssembly。无需服务器、无需云、无需账户。首次加载后可离线工作。您的电路永远不会离开您的机器。",
+    "browserOfflineBody": "通过开源 eecircuit-engine 将 ngspice 编译为 WebAssembly。无服务器、无云端、无账户。首次加载后可离线工作。您的电路永远不会离开您的机器。",
     "catalogHeading": "100 多个 SPICE 精确元件",
     "catalogLead": "完整的电子元件目录 — 无源器件、半导体、逻辑器件、仪器 — 每个都使用真实的 ngspice 器件模型，而非行为替代。",
     "coSimHeading": "混合数字 + 模拟协同仿真",
     "coSimLead": "大多数浏览器模拟器要么运行您的固件，要么运行电路 — 但从未同时运行两者。Velxio 2.5 在同一时钟上求解它们。",
     "driveMotor": "从 Arduino 引脚驱动电机",
-    "driveMotorBody": "引脚高电平 → MOSFET 栅极 → 通过真实感性负载的漏极电流 → 通过续流二极管的反电动势。全部由 SPICE 求解。并排观察栅极和漏极电压波形。",
+    "driveMotorBody": "引脚高电平 → MOSFET 栅极 → 通过真实感性负载的漏极电流 → 通过续流二极管的反电动势。全部由 SPICE 求解。并排观察栅极和漏极电压。",
     "readSensor": "通过真实运算放大器读取传感器",
-    "readSensorBody": "光电二极管 → 跨阻运算放大器 → ADC。调节光照强度滑块，观察 analogRead() 通过实际放大器级的响应 — 包括饱和、压摆率等。",
+    "readSensorBody": "光电二极管 → 跨阻运算放大器 → ADC。调节光照滑块，观察 analogRead() 通过实际放大器级的响应 — 包括饱和、压摆率等。",
     "liveInstruments": "使用实时仪器调试",
     "liveInstrumentsBody": "在任何两个节点之间放置电流表，在任何网络上放置电压表。示波器同时捕获数字引脚和模拟节点。没有“假设” — 只有测量。",
-    "examplesHeading": "40 个新的模拟与混合示例",
+    "examplesHeading": "40 个新的模拟和混合示例",
     "examplesLead": "预接线电路，一键打开 — 从教科书基础到真实的 Arduino+模拟系统。",
     "examples": {
       "fundamentals": {
@@ -114,19 +114,52 @@
       }
     },
     "outcomeHeading": "成果",
-    "outcomeLead": "Velxio 2.5 闭合了固件与硬件之间的回路：运行您的代码的同一工具现在也求解其周围的电路。",
+    "outcomeLead": "Velxio 2.5 闭环了固件与硬件：运行您的代码的同一工具现在求解其周围的电路。",
     "outcome": {
       "teach": "教授与学习电子学",
-      "teachBody": "面向学生的免费、基于浏览器的 SPICE 游乐场 — 外加驱动真实微控制器固件的优势。无需许可证、无需安装、无需预约实验室。",
+      "teachBody": "面向学生的免费、基于浏览器的 SPICE 游乐场 — 外加驱动真实微控制器固件的优势。无需许可证、无需安装、无需实验室预约。",
       "prototype": "焊接前进行原型验证",
       "prototypeBody": "在订购任何零件之前，端到端验证模拟前端、功率级和传感器流水线。示波器和万用表已在工作台上。",
       "openSource": "仍然 100% 开源",
-      "openSourceBody": "GitHub 上的 AGPL-3.0。基于 ngspice、eecircuit-engine、avr8js、rp2040js、QEMU 和 wokwi-elements 构建。可分支、托管、扩展。"
+      "openSourceBody": "GitHub 上的 AGPL-3.0。基于 ngspice、eecircuit-engine、avr8js、rp2040js、QEMU 和 wokwi-elements 构建。可分支、托管和扩展。"
     },
     "builtOnOssLead": "Velxio 2.5 站在数十年电子工具巨人的肩膀上。衷心感谢以下每个项目的维护者。",
     "bottom": {
       "title": "立即尝试 Velxio 2.5",
       "body": "打开编辑器并开始模拟 — 固件和模拟电路，同一画布，零设置。"
+    }
+  },
+  "v3": {
+    "versionBadge": "版本 3.0",
+    "heroAccent": "复古 CPU、多板系统、全电路精度",
+    "heroSubtitle": "Velxio 3.0 是迄今为止最大的版本。对经典 Z80、8080 和 4004 处理器进行编程，模拟 MicroSD 卡和 ePaper 显示屏，将整个多板系统连接在一起，并在画布上撤销任何错误。超过 100 个新示例 — 全部免费、开源，并在浏览器中运行。",
+    "tryV3": "尝试 Velxio 3.0",
+    "whatsNewHeading": "最大的 Velxio 版本",
+    "whatsNewLead": "Velxio 2.5 带来了真实的模拟电路。Velxio 3.0 同时向各个方向扩展 — 新处理器、存储和显示、真正的多板系统、更精确的模拟，以及您一直要求的编辑器优化。",
+    "retroTitle": "经典 CPU，完全可编程",
+    "retroBody": "将 Z80、8080、4004、4040 或 8086 放到画布上，加载您自己的 ROM，并在编辑器中编写汇编 — 无需主机板。",
+    "multiBoardTitle": "整个系统，而非单板",
+    "multiBoardBody": "在所有支持的开发板之间连接 UART、I2C、SPI 和普通 GPIO。ESP32 与 Pico 对话，Pico 与 Arduino 对话，全部在同一时钟上求解。",
+    "polishTitle": "撤销、小地图、实时编辑",
+    "polishBody": "对每个画布操作进行完整的撤销/重做，可拖动的小地图用于导航大型构建，以及在模拟运行时拖拽移动部件。",
+    "catalogHeading": "3.0 中的所有新功能",
+    "catalogLead": "版本的完整巡览 — 新处理器、存储和显示、多板互连、模拟精度、性能，以及超过一百个全新示例。",
+    "examplesHeading": "100 多个新的图库示例",
+    "examplesLead": "Pico Doom、ESP32-CAM 预览、ePaper 仪表盘、复古 CPU 演示、100 天物联网系列，以及数十个模拟电路 — 每个只需单击一次。",
+    "outcomeHeading": "成果",
+    "outcomeLead": "Velxio 3.0 将板级模拟器转变为完整的嵌入式系统工作台：处理器、外设、存储、显示和电路，全部在一个浏览器标签页中。",
+    "outcome": {
+      "build": "构建完整系统",
+      "buildBody": "具有真实 UART/I2C/SPI 链路、MicroSD 存储和 ePaper 或摄像头输出的多板项目 — 在接触硬件之前端到端原型验证。",
+      "learn": "从复古到现代学习",
+      "learnBody": "逐条指令跟踪 4 位 Intel 4004，然后跳转到 32 位 RISC-V 或四核 ARM Linux 板 — 同一画布，同一工具。",
+      "openSource": "仍然 100% 开源",
+      "openSourceBody": "GitHub 上的 AGPL-3.0。无需账户、无需云端、无需安装。可分支、自托管和扩展。"
+    },
+    "builtOnOssLead": "Velxio 3.0 站在数十年开源模拟和 EDA 工作的基础上。衷心感谢以下每个项目的维护者。",
+    "bottom": {
+      "title": "立即尝试 Velxio 3.0",
+      "body": "打开编辑器并开始构建 — 处理器、外设、电路和多板系统，零设置。"
     }
   }
 }

@@ -19,7 +19,10 @@
 export type PinState = boolean;
 export type PinChangeCallback = (pin: number, state: PinState) => void;
 export type AnalogCallback = (pin: number, voltage: number) => void;
-export type PwmCallback = (pin: number, dutyCycle: number) => void;
+// timeMs (optional) is the precise simulated time of the duty-cycle change
+// (cpu.cycles / 16000). Parts that schedule audio/output use it for
+// sample-accurate timing instead of the per-frame delivery instant.
+export type PwmCallback = (pin: number, dutyCycle: number, timeMs?: number) => void;
 
 export class PinManager {
   private listeners: Map<number, Set<PinChangeCallback>> = new Map();
@@ -190,14 +193,21 @@ export class PinManager {
   }
 
   /**
-   * Called by AVRSimulator each frame when an OCR register changes.
+   * Called by AVRSimulator when an OCR register changes (polled sub-frame).
+   * timeMs is the precise simulated time of the change for accurate audio.
    */
-  updatePwm(pin: number, dutyCycle: number): void {
+  updatePwm(pin: number, dutyCycle: number, timeMs?: number): void {
     this.pwmValues.set(pin, dutyCycle);
     if (dutyCycle > 0) this.outputPins.add(pin);
     const callbacks = this.pwmListeners.get(pin);
     if (callbacks) {
-      callbacks.forEach((cb) => cb(pin, dutyCycle));
+      // Backward-compatible dispatch: the original PwmCallback contract is
+      // (pin, dutyCycle). Only listeners that actually declare a 3rd parameter
+      // (the buzzer, which needs the precise onset time for sample-accurate
+      // audio) receive timeMs. Plain 2-arg listeners — and the existing tests
+      // that assert toHaveBeenCalledWith(pin, dutyCycle) — see an unchanged
+      // 2-arg call instead of a spurious trailing arg.
+      callbacks.forEach((cb) => (cb.length >= 3 ? cb(pin, dutyCycle, timeMs) : cb(pin, dutyCycle)));
     }
   }
 

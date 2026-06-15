@@ -28,39 +28,12 @@ import enSeo from "./locales/en/seo.json";
 import enSeo2 from "./locales/en/seo2.json";
 import enSeo3 from "./locales/en/seo3.json";
 import enSeo4 from "./locales/en/seo4.json";
-import { DEFAULT_LOCALE, LOCALES, isLocale, type Locale } from "./config";
-import { getLocaleFromPath } from "./path";
-import { readLocaleCookie } from "./cookie";
+import { DEFAULT_LOCALE, LOCALES, type Locale } from "./config";
 
 const NAMESPACES = ["common"] as const;
 type Namespace = (typeof NAMESPACES)[number];
 
 const SUPPORTED_LANGS = LOCALES as readonly string[];
-
-/**
- * Resolve the locale to start with. Runs once on mount before i18next
- * is initialised. URL beats cookie beats browser locale.
- */
-function pickInitialLocale(): Locale {
-  if (typeof window !== "undefined") {
-    const fromUrl = getLocaleFromPath(window.location.pathname);
-    if (fromUrl !== DEFAULT_LOCALE) return fromUrl;
-    // URL is at default-locale root — fall through to other signals.
-    const fromCookie = readLocaleCookie();
-    if (fromCookie) return fromCookie;
-    const navLangs = (
-      navigator.languages?.length ? navigator.languages : [navigator.language]
-    )
-      .map(l => l?.toLowerCase() ?? "")
-      .filter(Boolean);
-    for (const tag of navLangs) {
-      if (isLocale(tag)) return tag;
-      const base = tag.split("-")[0];
-      if (isLocale(base)) return base;
-    }
-  }
-  return DEFAULT_LOCALE;
-}
 
 // Init is synchronous for the default locale (resources are inlined via
 // the static import above), so we don't need to await the returned
@@ -87,9 +60,24 @@ void i18n
         },
       },
     },
-    lng: pickInitialLocale(),
+    // Start at the default locale (its resources are inlined above). The
+    // active locale is then driven from the URL by LocaleSync after mount,
+    // which lazy-loads the matching bundle and performs a real
+    // changeLanguage — the event that makes subscribed components re-render.
+    // Seeding `lng` to the URL locale here instead left direct loads of a
+    // non-default URL stuck on the English fallback, because LocaleSync's
+    // `i18n.language !== target` guard was already satisfied so the bundle
+    // was never fetched.
+    lng: DEFAULT_LOCALE,
     fallbackLng: DEFAULT_LOCALE,
     supportedLngs: SUPPORTED_LANGS,
+    // Our locale codes are lowercase with a lowercase region ("zh-cn",
+    // "pt-br"). i18next's default code formatting rewrites those to
+    // "zh-CN" / "pt-BR", which then fail the `supportedLngs` check and get
+    // dropped from the resolve hierarchy — leaving only the English
+    // fallback, so those two locales never resolved their own bundle.
+    // Forcing lowercase keeps the codes consistent with the bundles.
+    lowerCaseLng: true,
     ns: NAMESPACES,
     defaultNS: "common",
     interpolation: { escapeValue: false }, // React already escapes
@@ -97,7 +85,7 @@ void i18n
       useSuspense: false, // we register resources synchronously in dev
     },
     detection: {
-      // We make the locale decision ourselves in `pickInitialLocale`;
+      // LocaleSync makes the locale decision from the URL after mount;
       // detector is left configured for future fallback paths only.
       order: ["path", "cookie", "navigator"],
       lookupCookie: "velxio_locale",

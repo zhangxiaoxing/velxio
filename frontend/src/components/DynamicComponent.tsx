@@ -15,6 +15,8 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import type { ComponentMetadata } from '../types/component-metadata';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { useElectricalStore } from '../store/useElectricalStore';
+import { useEditorStore } from '../store/useEditorStore';
+import { buildProjectSdImage, decodeSdFiles } from '../utils/sdCardFiles';
 import { PartSimulationRegistry } from '../simulation/parts';
 import { isBoardComponent, boardPinToNumber } from '../utils/boardPinMapping';
 import {
@@ -26,6 +28,7 @@ import {
 } from '../simulation/PinResolver';
 import { BOARD_PIN_GROUPS } from '../simulation/spice/boardPinGroups';
 import { syntheticChipPin } from '../simulation/customChips/syntheticPins';
+import { resolveChipNetKey } from '../simulation/customChips/chipNets';
 import { getMixedModeScheduler } from '../simulation/spice/MixedModeScheduler';
 import { getBoardLogicFamily } from '../simulation/LogicFamilies';
 
@@ -166,6 +169,23 @@ function traceDetailed(
         );
         if (result.arduinoPin !== null) return result;
       }
+    }
+  }
+
+  // No board pin reachable. Multi-chip digital bus (chipbus flag, Phase 0 of
+  // project/multichip-bus/): when this net has two or more chip endpoints and
+  // no board pin, collapse every endpoint onto ONE net-canonical synthetic key
+  // so a write on one chip is visible to another through the synchronous
+  // PinManager fan-out (fixes root cause A: per-endpoint keys never matching).
+  // resolveChipNetKey returns null when the flag is off, when a board owns the
+  // net, or when there is a single chip endpoint — so the chip-to-component
+  // rules below (2 and 3) are left exactly as-is. Scoped to depth 0 (the
+  // starting chip pin); the key is net-bound, so a pin flipping INPUT<->OUTPUT
+  // keeps the same key with no re-trace.
+  if (depth === 0) {
+    const netKey = resolveChipNetKey(state, fromId, fromPin);
+    if (netKey !== null) {
+      return { arduinoPin: netKey, crossedActiveDevice: activeSeen };
     }
   }
 
@@ -539,6 +559,19 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
           getArduinoPin,
         );
       };
+
+      // microSD auto-copy (free, Wokwi model): bake the project's workspace
+      // files into a FAT16 image the card serves over SD-over-SPI. Paid uploads
+      // (the "SD Card" panel) will merge into this list in a later phase.
+      if (metadata.id === 'microsd-card') {
+        try {
+          const uploaded = decodeSdFiles(properties.sdFiles); // paid uploads (if any)
+          (el as unknown as { sdImageData?: Uint8Array }).sdImageData =
+            buildProjectSdImage(useEditorStore.getState().files, uploaded);
+        } catch (e) {
+          console.warn('[microsd] SD image build failed:', e);
+        }
+      }
 
       cleanupSimulationEvents = logic.attachEvents(
         el,

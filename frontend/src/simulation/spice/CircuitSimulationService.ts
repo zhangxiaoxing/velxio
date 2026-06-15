@@ -28,6 +28,7 @@
 import { buildInputFromStore } from './storeAdapter';
 import { buildNetlist, sanitizeSpiceId } from './NetlistBuilder';
 import type { TimeWaveforms } from './types';
+import { digitalGatesEnabled, isAllDigital } from '../digital/digitalGateEngine';
 
 /** What the service needs from the simulator store. */
 export interface SimulatorStorePort {
@@ -166,6 +167,15 @@ export class CircuitSimulationService {
   /** Run one solve cycle, coalescing concurrent triggers. */
   async tick(): Promise<void> {
     if (this.stopped) return;
+    // The digital-gate engine owns all-digital board-less circuits when
+    // ?digitalgates=on; skip the SPICE solve so the two motors don't fight over
+    // the LEDs. Flag off (default) -> isAllDigital is never consulted.
+    if (
+      digitalGatesEnabled() &&
+      isAllDigital((this.simStore.getState() as { components: unknown[] }).components as never[])
+    ) {
+      return;
+    }
     if (this.inFlight) {
       this.pending = true;
       return;
