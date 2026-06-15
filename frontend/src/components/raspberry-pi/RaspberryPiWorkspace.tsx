@@ -13,6 +13,7 @@ import { VirtualFileSystem } from './VirtualFileSystem';
 import { useVfsStore } from '../../store/useVfsStore';
 import { getBoardBridge, useSimulatorStore } from '../../store/useSimulatorStore';
 import { attachSlavesFromCanvas } from '../../simulation/piSlaveScanner';
+import { boardDisplayName } from '../../types/board';
 
 // Lazy-load PiTerminal so @xterm/xterm is only bundled when needed
 const PiTerminal = lazy(() => import('./PiTerminal').then((m) => ({ default: m.PiTerminal })));
@@ -36,6 +37,10 @@ export const RaspberryPiWorkspace: React.FC<RaspberryPiWorkspaceProps> = ({ boar
   const startBoard = useSimulatorStore((s) => s.startBoard);
   const setContent = useVfsStore((s) => s.setContent);
   const getNode = useVfsStore((s) => s.getNode);
+
+  // Display the active board's real name (Pi 3B / 4B / 5 / Zero / …) instead of
+  // a hardcoded "Raspberry Pi 3B" — the workspace serves the whole Pi family.
+  const boardLabel = board ? boardDisplayName(board) : 'Raspberry Pi';
 
   // Auto-connect terminal when board starts running
   useEffect(() => {
@@ -127,7 +132,7 @@ export const RaspberryPiWorkspace: React.FC<RaspberryPiWorkspaceProps> = ({ boar
       <div style={styles.main}>
         {/* Pi-specific toolbar */}
         <div style={styles.toolbar}>
-          <span style={styles.toolbarTitle}>Raspberry Pi 3B</span>
+          <span style={styles.toolbarTitle}>{boardLabel}</span>
           <div style={styles.toolbarActions}>
             {/* Status indicator */}
             <span
@@ -218,7 +223,7 @@ export const RaspberryPiWorkspace: React.FC<RaspberryPiWorkspaceProps> = ({ boar
             <div style={styles.offlineOverlay}>
               <div style={styles.offlineBox}>
                 <div style={styles.offlineIcon}>🖥️</div>
-                <div style={styles.offlineTitle}>{t('editor.pi.offlineTitle')}</div>
+                <div style={styles.offlineTitle}>{t('editor.pi.offlineTitle', { board: boardLabel })}</div>
                 <div style={styles.offlineSubtitle}>{t('editor.pi.offlineSubtitle')}</div>
                 <button style={styles.startBtn} onClick={() => startBoard(boardId)}>
                   ▶ {t('editor.pi.startPi')}

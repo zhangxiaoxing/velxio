@@ -348,8 +348,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           modified: false,
         }));
       } else {
-        // Determine default file by group name convention or language mode
-        const isPi = groupId.includes('raspberry-pi-3');
+        // Determine default file by group name convention or language mode.
+        // All Linux Pi boards (Zero/1/2/3/4/5) default to script.py; the Pico
+        // (RP2040) is browser-emulated and not a Linux Pi. Mirrors
+        // isPiBoardKind() in types/board.ts, adapted to the `group-<id>` convention.
+        const isPi =
+          groupId.includes('raspberry-pi-') && !groupId.includes('raspberry-pi-pico');
         const isMicroPython = languageMode === 'micropython';
         const mainId = `${groupId}-main`;
         let fileName: string;

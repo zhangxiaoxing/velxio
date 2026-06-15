@@ -196,6 +196,26 @@ describe('useEditorStore — file groups', () => {
     expect(updated['group-raspberry-pi-3'][0].name).toMatch(/\.py$/);
   });
 
+  // Regression: every Linux Pi (not just the 3) must default to a Python file
+  // and the Pi workspace, never the Arduino sketch. The Pico (RP2040) is a
+  // microcontroller and must stay on .ino.
+  it.each(['raspberry-pi-zero', 'raspberry-pi-1', 'raspberry-pi-2', 'raspberry-pi-4', 'raspberry-pi-5'])(
+    'createFileGroup creates a .py file for %s',
+    (kind) => {
+      const { createFileGroup } = useEditorStore.getState();
+      createFileGroup(`group-${kind}`);
+      const updated = useEditorStore.getState().fileGroups;
+      expect(updated[`group-${kind}`][0].name).toMatch(/\.py$/);
+    },
+  );
+
+  it('createFileGroup keeps the Raspberry Pi Pico on a .ino sketch (not Linux)', () => {
+    const { createFileGroup } = useEditorStore.getState();
+    createFileGroup('group-raspberry-pi-pico');
+    const updated = useEditorStore.getState().fileGroups;
+    expect(updated['group-raspberry-pi-pico'][0].name).toMatch(/\.ino$/);
+  });
+
   it('createFileGroup accepts custom initial files', () => {
     const { createFileGroup } = useEditorStore.getState();
     createFileGroup('group-custom', [

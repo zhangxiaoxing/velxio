@@ -277,7 +277,7 @@
       "disconnect": "Déconnecter",
       "terminal": "Terminal",
       "close": "Fermer",
-      "offlineTitle": "Raspberry Pi 3B est éteint",
+      "offlineTitle": "{{board}} est éteint",
       "offlineSubtitle": "Démarrez le Pi pour ouvrir un terminal et interagir avec le système Linux.",
       "offlineNote1": "Remarque : L'explorateur de fichiers affiche une zone de préparation.",
       "offlineNote2": "Utilisez \"Téléverser vers Pi\" après le démarrage pour transférer des fichiers vers le Pi en cours d'exécution.",

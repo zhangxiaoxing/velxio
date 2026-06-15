@@ -277,7 +277,7 @@
       "disconnect": "Trennen",
       "terminal": "Terminal",
       "close": "Schließen",
-      "offlineTitle": "Raspberry Pi 3B ist ausgeschaltet",
+      "offlineTitle": "{{board}} ist ausgeschaltet",
       "offlineSubtitle": "Starten Sie den Pi, um ein Terminal zu öffnen und mit dem Linux-System zu interagieren.",
       "offlineNote1": "Hinweis: Der Dateiexplorer zeigt einen Staging-Bereich an.",
       "offlineNote2": "Verwenden Sie „Auf Pi hochladen“ nach dem Start, um Dateien auf den laufenden Pi zu übertragen.",

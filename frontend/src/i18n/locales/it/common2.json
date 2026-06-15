@@ -277,7 +277,7 @@
       "disconnect": "Disconnetti",
       "terminal": "Terminale",
       "close": "Chiudi",
-      "offlineTitle": "Raspberry Pi 3B è spento",
+      "offlineTitle": "{{board}} è spento",
       "offlineSubtitle": "Avvia il Pi per aprire un terminale e interagire con il sistema Linux.",
       "offlineNote1": "Nota: L'esplora file mostra un'area di staging.",
       "offlineNote2": "Usa \"Carica su Pi\" dopo l'avvio per trasferire file al Pi in esecuzione.",

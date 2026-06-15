@@ -31,6 +31,7 @@ import { useOscilloscopeStore } from '../store/useOscilloscopeStore';
 import { useProjectStore } from '../store/useProjectStore';
 import { useAutoSaveProject } from '../hooks/useAutoSaveProject';
 import type { CompilationLog } from '../utils/compilationLogger';
+import { isPiBoardKind } from '../types/board';
 import '../App.css';
 
 const MOBILE_BREAKPOINT = 768;
@@ -77,7 +78,9 @@ export const EditorPage: React.FC = () => {
   const activeBoardKind = useSimulatorStore(
     (s) => s.boards.find((b) => b.id === s.activeBoardId)?.boardKind,
   );
-  const isRaspberryPi3 = activeBoardKind === 'raspberry-pi-3';
+  // Pi 3/4/5 and Zero/1/2 all run the QEMU Linux workspace (terminal + Python),
+  // not the Arduino/Monaco editor. Pico (RP2040) is browser-emulated, not a Pi here.
+  const isLinuxPi = isPiBoardKind(activeBoardKind ?? '');
   const oscilloscopeOpen = useOscilloscopeStore((s) => s.open);
   const [consoleOpen, setConsoleOpen] = useState(false);
   // compileLogs live in a Zustand store so the velxio-pro agent overlay
@@ -459,7 +462,7 @@ export const EditorPage: React.FC = () => {
               setConsoleOpen={setConsoleOpen}
               compileLogs={compileLogs}
               setCompileLogs={setCompileLogs}
-              centerSlot={!isRaspberryPi3 ? <FileTabs /> : null}
+              centerSlot={!isLinuxPi ? <FileTabs /> : null}
             />
           </div>
           <div className="unified-toolbar-canvas" ref={setCanvasHeaderSlot} />
@@ -540,7 +543,7 @@ export const EditorPage: React.FC = () => {
                     setConsoleOpen={setConsoleOpen}
                     compileLogs={compileLogs}
                     setCompileLogs={setCompileLogs}
-                    centerSlot={!isRaspberryPi3 ? <FileTabs /> : null}
+                    centerSlot={!isLinuxPi ? <FileTabs /> : null}
                   />
                 </div>
               </div>
@@ -548,7 +551,7 @@ export const EditorPage: React.FC = () => {
 
             {/* Editor area: Pi workspace or Monaco editor */}
             <div className="editor-wrapper" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-              {isRaspberryPi3 && activeBoardId ? (
+              {isLinuxPi && activeBoardId ? (
                 <Suspense
                   fallback={
                     <div style={{ color: '#666', padding: 16, fontSize: 12 }}>

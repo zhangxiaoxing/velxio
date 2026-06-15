@@ -277,7 +277,7 @@
       "disconnect": "切断",
       "terminal": "端末",
       "close": "閉じる",
-      "offlineTitle": "Raspberry Pi 3B の電源がオフです",
+      "offlineTitle": "{{board}} の電源がオフです",
       "offlineSubtitle": "Pi を起動して端末を開き、Linux システムと対話します。",
       "offlineNote1": "注: ファイルエクスプローラはステージング領域を表示します。",
       "offlineNote2": "起動後、「Pi にアップロード」を使用してファイルを実行中の Pi に転送します。",

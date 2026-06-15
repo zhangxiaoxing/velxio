@@ -279,7 +279,7 @@
       "disconnect": "Desconectar",
       "terminal": "Terminal",
       "close": "Cerrar",
-      "offlineTitle": "Raspberry Pi 3B está apagada",
+      "offlineTitle": "{{board}} está apagada",
       "offlineSubtitle": "Inicia la Pi para abrir un terminal e interactuar con el sistema Linux.",
       "offlineNote1": "Nota: El explorador de archivos muestra un área de preparación.",
       "offlineNote2": "Usa \"Subir a Pi\" después de iniciar para transferir archivos a la Pi en ejecución.",

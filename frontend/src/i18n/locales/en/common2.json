@@ -279,7 +279,7 @@
       "disconnect": "Disconnect",
       "terminal": "Terminal",
       "close": "Close",
-      "offlineTitle": "Raspberry Pi 3B is powered off",
+      "offlineTitle": "{{board}} is powered off",
       "offlineSubtitle": "Start the Pi to open a terminal and interact with the Linux system.",
       "offlineNote1": "Note: The file explorer shows a staging area.",
       "offlineNote2": "Use \"Upload to Pi\" after starting to transfer files to the running Pi.",
