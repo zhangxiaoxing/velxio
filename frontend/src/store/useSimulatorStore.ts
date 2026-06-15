@@ -19,7 +19,6 @@ import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
 import { BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, isStm32BoardKind } from '../types/board';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
-import { wifiGateDecision } from '../lib/proWifiGate';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
 import { useOscilloscopeStore } from './useOscilloscopeStore';
 import { RaspberryPi3Bridge } from '../simulation/RaspberryPi3Bridge';
@@ -1414,15 +1413,6 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       if (!board) return;
       if (!BOARD_SUPPORTS_MICROPYTHON.has(board.boardKind)) return;
 
-      // Pro WiFi gate: a non-paid web user running a Pico W sketch that uses
-      // WiFi gets the upgrade prompt instead of loading the plain-Pico firmware
-      // (which lacks `network` -> ImportError). Non-WiFi Pico W sketches run
-      // fine. No-op in OSS. See lib/proWifiGate.ts + the pro installCyw43.
-      if (wifiGateDecision(board.boardKind, files) === 'block') {
-        triggerProUpgradePrompt('Pico W WiFi emulation');
-        return;
-      }
-
       if (isEsp32Kind(board.boardKind)) {
         // ESP32 path: load MicroPython firmware via QEMU bridge, inject code via raw-paste REPL
         const { getEsp32Firmware, padToFlashSize, uint8ArrayToBase64 } =
@@ -1615,20 +1605,6 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       if (boardGateDecision(board.boardKind) === 'block') {
         triggerProUpgradePrompt(proBoardFeatureName(board.boardKind));
         return;
-      }
-
-      // Pro WiFi gate (run backstop): a Pico W can enter the canvas via an
-      // example or a loaded project, bypassing loadMicroPythonProgram's gate.
-      // A non-paid web user whose Pico W sketch uses WiFi gets the upgrade
-      // prompt instead of a broken plain-Pico boot. No-op in OSS.
-      {
-        const ed = useEditorStore.getState();
-        const grp = ed.fileGroups[board.activeFileGroupId];
-        const boardFilesForGate = grp && grp.length > 0 ? grp : ed.files;
-        if (wifiGateDecision(board.boardKind, boardFilesForGate) === 'block') {
-          triggerProUpgradePrompt('Pico W WiFi emulation');
-          return;
-        }
       }
 
       if (isPiBoardKind(board.boardKind)) {
