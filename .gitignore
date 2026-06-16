@@ -127,6 +127,12 @@ backend/app/services/libqemu-*.dll.pre-camera
 backend/app/services/libqemu-*.dll.new
 backend/app/services/libqemu-*.dll.bak
 
+# Obsolete Windows-only QEMU build helpers (MSYS2/MINGW64). Superseded by
+# docs/BUILD-QEMU.md (Linux/macOS .so via lcgamboa/qemu) and the prebuilt /
+# CDN binary flow; kept local-only on the operator's box, never tracked.
+/build_qemu_all.sh
+/build_qemu_step4.sh
+
 # esp32-camera repo is cloned during dev (used as include path by the
 # arduino-esp32 toolchain via ARDUINO_ESP32_PATH). Not a submodule and
 # not part of the main repo — gitignored to keep the working tree clean.
