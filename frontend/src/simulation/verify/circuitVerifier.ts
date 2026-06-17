@@ -24,6 +24,7 @@
 import { buildNetlist } from '../spice/NetlistBuilder';
 import { runNetlist as runSpice } from '../spice/runNetlist';
 import type { BuildNetlistInput, ElectricalSolveResult } from '../spice/types';
+import { COMPONENT_RATINGS } from './componentRatings';
 
 export type WarningSeverity = 'error' | 'warning';
 export type WarningCode =
@@ -32,6 +33,7 @@ export type WarningCode =
   | 'short-circuit'
   | 'source-overload'
   | 'led-overcurrent'
+  | 'over-voltage'
   | 'resistor-overpower'
   | 'led-no-current';
 
@@ -96,7 +98,7 @@ export async function verifyCircuit(
 
   // Run a forced .op solve so currents are scalar and deterministic.
   const opInput: BuildNetlistInput = { ...input, analysis: { kind: 'op' } };
-  const { netlist } = buildNetlist(opInput);
+  const { netlist, pinNetMap } = buildNetlist(opInput);
 
   let solve: ElectricalSolveResult | undefined;
   try {
@@ -262,6 +264,47 @@ export async function verifyCircuit(
     }
   }
 
+  // ── Rule 4: over-voltage on a rated supply pin ─────────────────────────
+  // Components with a rated input voltage (sensors, displays, NeoPixels, …)
+  // warn when their supply pin carries more than the datasheet absolute
+  // maximum — the "fed too much voltage" mistake (e.g. a 3.3 V module wired to
+  // a 9 V battery). Non-blocking: the solve is still meaningful, but the real
+  // part would be damaged, so we surface it and flag that this operating point
+  // isn't emulated accurately. (Boards aren't checked yet — BoardForSpice
+  // doesn't carry its boardKind; that's a follow-up.)
+  for (const comp of input.components) {
+    const rating = COMPONENT_RATINGS[comp.metadataId];
+    if (!rating) continue;
+    // Ground reference: first wired gnd pin, else circuit ground (0 V).
+    let gndV = 0;
+    for (const g of rating.gndPins) {
+      const gnet = pinNetMap.get(`${comp.id}:${g}`);
+      if (gnet !== undefined) {
+        gndV = gnet === '0' ? 0 : (solve.nodeVoltages[gnet] ?? 0);
+        break;
+      }
+    }
+    for (const sp of rating.supplyPins) {
+      const net = pinNetMap.get(`${comp.id}:${sp.name}`);
+      if (net === undefined || net === '0') continue; // pin not wired / tied to GND
+      const sv = solve.nodeVoltages[net];
+      if (sv === undefined || !Number.isFinite(sv)) continue; // net floating / unsolved
+      const v = Math.abs(sv - gndV);
+      if (v > sp.absMaxVoltage) {
+        warnings.push({
+          severity: 'warning',
+          code: 'over-voltage',
+          componentId: comp.id,
+          message: `${rating.label} ${comp.id} is seeing ${formatVolts(v)} on its ${sp.name} pin — above its ${formatVolts(
+            sp.absMaxVoltage,
+          )} absolute maximum. Real hardware would likely be damaged; this voltage is not emulated accurately. Use a level shifter or the correct supply voltage.`,
+          metric: v,
+        });
+        break; // one over-voltage warning per part is enough
+      }
+    }
+  }
+
   return {
     errors,
     warnings,
@@ -277,6 +320,12 @@ function formatAmps(a: number): string {
   if (a >= 1e-3) return `${(a * 1e3).toFixed(1)} mA`;
   if (a >= 1e-6) return `${(a * 1e6).toFixed(1)} µA`;
   return `${a.toExponential(2)} A`;
+}
+
+function formatVolts(v: number): string {
+  if (v >= 1) return `${v.toFixed(1)} V`;
+  if (v >= 1e-3) return `${(v * 1e3).toFixed(0)} mV`;
+  return `${v.toExponential(2)} V`;
 }
 
 function formatPower(w: number): string {

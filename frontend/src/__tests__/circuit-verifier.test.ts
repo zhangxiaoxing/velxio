@@ -191,6 +191,76 @@ describe('verifyCircuit — threshold overrides', () => {
   );
 });
 
+describe('verifyCircuit — over-voltage on rated parts', () => {
+  function part(id: string, metadataId: string): BuildNetlistInput['components'][number] {
+    return { id, metadataId, properties: {} };
+  }
+
+  it(
+    'warns when a 3.3-5V module (SSD1306 VIN) is fed 9 V',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 9), part('oled1', 'ssd1306')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['oled1', 'VIN']),
+          w('w2', ['oled1', 'GND'], ['src', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const ov = result.warnings.find((x) => x.code === 'over-voltage');
+      expect(ov, JSON.stringify(result.warnings)).toBeDefined();
+      expect(ov?.componentId).toBe('oled1');
+      // over-voltage is non-blocking
+      expect(result.errors.map((e) => e.code)).not.toContain('over-voltage');
+    },
+  );
+
+  it(
+    'does NOT warn when the same module is fed a safe 5 V on VIN',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), part('oled2', 'ssd1306')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['oled2', 'VIN']),
+          w('w2', ['oled2', 'GND'], ['src', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      expect(result.warnings.map((x) => x.code)).not.toContain('over-voltage');
+    },
+  );
+
+  it(
+    'warns when a strict 3.3 V pin (SSD1306 3V3) sits on a 5 V rail',
+    { timeout: 30_000 },
+    async () => {
+      // VCC-like pin names (VCC/VDD/3V3/5V) canonicalise to the shared
+      // `vcc_rail` net, which defaults to 5 V. A 10k load gives the rail a
+      // real path to ground so the .op solves. The OLED's 3V3 pin (abs max
+      // 3.6 V) on that 5 V rail must warn.
+      const input: BuildNetlistInput = {
+        components: [part('oled3', 'ssd1306'), res('rl', '10k')],
+        wires: [
+          w('w1', ['oled3', '3V3'], ['rl', '1']),
+          w('w2', ['rl', '2'], ['oled3', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const ov = result.warnings.find((x) => x.code === 'over-voltage');
+      expect(ov, JSON.stringify(result.warnings)).toBeDefined();
+      expect(ov?.componentId).toBe('oled3');
+    },
+  );
+});
+
 // ── Sanity: shipping examples never trigger errors ─────────────────────────
 // If any gallery example produces a verifier error, that's a bug in the
 // example itself. Loop a handful of representative ones to catch
