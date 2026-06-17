@@ -432,7 +432,10 @@ export const EditorToolbar = ({
     // Wipe the previous build's output before we append anything new.
     // Issue #209: lingering logs from prior compiles made it impossible
     // to tell the latest errors / warnings apart from stale ones.
-    setCompileLogs([]);
+    // Keep the "Circuit check" findings, though: a Run auto-compiles right
+    // after the pre-flight verification logs them, and clearing here would
+    // wipe a circuit warning the user just triggered.
+    setCompileLogs((prev) => prev.filter((l) => l.target?.id === CIRCUIT_CHECK_TARGET.id));
     trackCompileCode();
 
     // ── Custom-chip preparation ─────────────────────────────────────────
