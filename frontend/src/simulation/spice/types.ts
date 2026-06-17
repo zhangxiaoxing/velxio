@@ -32,6 +32,9 @@ export interface WireForSpice {
 export interface BoardForSpice {
   /** Stable unique board id (used as prefix in net names). */
   id: string;
+  /** Board kind (e.g. 'arduino-uno', 'esp32') — used to look up over-voltage
+   *  ratings in the verifier. Optional: older callers may omit it. */
+  boardKind?: string;
   /** Supply voltage of this board, V. */
   vcc: number;
   /**

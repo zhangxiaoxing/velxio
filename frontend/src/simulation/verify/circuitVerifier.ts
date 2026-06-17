@@ -34,6 +34,7 @@ export type WarningCode =
   | 'source-overload'
   | 'led-overcurrent'
   | 'over-voltage'
+  | 'reverse-polarity'
   | 'resistor-overpower'
   | 'led-no-current';
 
@@ -99,6 +100,48 @@ export async function verifyCircuit(
   // Run a forced .op solve so currents are scalar and deterministic.
   const opInput: BuildNetlistInput = { ...input, analysis: { kind: 'op' } };
   const { netlist, pinNetMap } = buildNetlist(opInput);
+
+  // ── Board over-voltage (graph-based, no solve) ─────────────────────────
+  // Runs BEFORE the solve so it still reports even when an external source on
+  // a board's vcc rail makes the .op singular. A board's supply pins (3V3 /
+  // 5V / VIN / VBUS / VSYS) all collapse to the single self-driven `vcc_rail`
+  // net, so an over-voltage can't be read from node voltages — instead check
+  // the wiring directly: a power source wired to a board supply pin whose
+  // nominal voltage exceeds that pin's rating. Non-blocking.
+  const boardWarned = new Set<string>();
+  for (const board of input.boards) {
+    if (!board.boardKind) continue;
+    const rating = COMPONENT_RATINGS[board.boardKind];
+    if (!rating) continue;
+    for (const wire of input.wires) {
+      if (boardWarned.has(board.id)) break;
+      for (const [boardEnd, srcEnd] of [
+        [wire.start, wire.end],
+        [wire.end, wire.start],
+      ] as const) {
+        if (boardEnd.componentId !== board.id) continue;
+        const sp = rating.supplyPins.find((p) => p.name === boardEnd.pinName);
+        if (!sp) continue;
+        const src = input.components.find((c) => c.id === srcEnd.componentId);
+        if (!src) continue;
+        const info = sourceInfo(src);
+        if (!info || !info.posPins.includes(srcEnd.pinName)) continue;
+        if (info.volts > sp.absMaxVoltage) {
+          boardWarned.add(board.id);
+          warnings.push({
+            severity: 'warning',
+            code: 'over-voltage',
+            componentId: board.id,
+            message: `${rating.label} ${board.id} has ${formatVolts(info.volts)} wired to its ${sp.name} pin — above its ${formatVolts(
+              sp.absMaxVoltage,
+            )} maximum. Real hardware would likely be damaged. Use the correct supply voltage (a regulator or level shifter).`,
+            metric: info.volts,
+          });
+          break;
+        }
+      }
+    }
+  }
 
   let solve: ElectricalSolveResult | undefined;
   try {
@@ -305,12 +348,83 @@ export async function verifyCircuit(
     }
   }
 
+  // ── Rule 6: electrolytic capacitor over-voltage / reverse polarity ─────
+  // Electrolytic caps have a voltage rating (over it they vent / burst) and a
+  // polarity (reverse-biasing destroys them). Their +/- pins are normal nets,
+  // so the DC voltage across them is read straight from the solve.
+  for (const c of input.components) {
+    if (!isElectrolyticCap(c.metadataId)) continue;
+    const posNet = pinNetMap.get(`${c.id}:+`);
+    const negNet = pinNetMap.get(`${c.id}:−`) ?? pinNetMap.get(`${c.id}:-`);
+    if (posNet === undefined || negNet === undefined) continue; // not fully wired
+    const vPos = posNet === '0' ? 0 : solve.nodeVoltages[posNet];
+    const vNeg = negNet === '0' ? 0 : solve.nodeVoltages[negNet];
+    if (vPos === undefined || vNeg === undefined || !Number.isFinite(vPos) || !Number.isFinite(vNeg)) {
+      continue; // a terminal net is floating / unsolved
+    }
+    const v = vPos - vNeg;
+    const rating = parseVolts(c.properties.voltage) ?? 25;
+    if (v > rating) {
+      warnings.push({
+        severity: 'warning',
+        code: 'over-voltage',
+        componentId: c.id,
+        message: `Electrolytic capacitor ${c.id} has ${formatVolts(v)} across it — above its ${formatVolts(
+          rating,
+        )} rating. A real capacitor would vent or burst; use a higher-voltage part.`,
+        metric: v,
+      });
+    } else if (v < -0.5) {
+      warnings.push({
+        severity: 'warning',
+        code: 'reverse-polarity',
+        componentId: c.id,
+        message: `Electrolytic capacitor ${c.id} is reverse-biased (${formatVolts(
+          Math.abs(v),
+        )} backwards). Polarized capacitors are destroyed when connected backwards — swap its + and - terminals.`,
+        metric: v,
+      });
+    }
+  }
+
   return {
     errors,
     warnings,
     componentsChecked: input.components.length,
     solve,
   };
+}
+
+/** Nominal positive-output voltage + positive pin names of a power source. */
+function sourceInfo(
+  comp: BuildNetlistInput['components'][number],
+): { posPins: string[]; volts: number } | null {
+  const id = comp.metadataId;
+  if (id === 'battery-9v') return { posPins: ['+'], volts: 9 };
+  if (id === 'battery-aa') return { posPins: ['+'], volts: 1.5 };
+  if (id === 'battery-coin-cell') return { posPins: ['+'], volts: 3 };
+  if (id === 'power-supply') {
+    return { posPins: ['+', 'SIG', 'VCC'], volts: Math.abs(Number(comp.properties.voltage ?? 5)) };
+  }
+  if (id === 'signal-generator') {
+    const off = Number(comp.properties.offset ?? 0);
+    const amp = String(comp.properties.waveform ?? 'sine').toLowerCase() === 'dc'
+      ? 0
+      : Number(comp.properties.amplitude ?? 0);
+    return { posPins: ['SIG', '+'], volts: Math.abs(off) + Math.abs(amp) };
+  }
+  return null;
+}
+
+function isElectrolyticCap(metadataId: string): boolean {
+  return metadataId === 'capacitor-electrolytic' || metadataId.startsWith('cap-elec');
+}
+
+/** Parse a voltage rating like '25', '25V', '6.3' → volts (null if unparseable). */
+function parseVolts(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return null;
+  const m = /^\s*([0-9]*\.?[0-9]+)/.exec(String(raw));
+  return m ? parseFloat(m[1]!) : null;
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────

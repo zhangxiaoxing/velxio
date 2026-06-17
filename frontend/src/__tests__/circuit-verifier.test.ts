@@ -261,6 +261,121 @@ describe('verifyCircuit — over-voltage on rated parts', () => {
   );
 });
 
+describe('verifyCircuit — board over-voltage (graph-based)', () => {
+  function board(id: string, boardKind: string): BuildNetlistInput['boards'][number] {
+    return {
+      id,
+      boardKind,
+      vcc: 3.3,
+      pins: {},
+      groundPinNames: ['GND', 'GND.1', 'GND.2'],
+      vccPinNames: ['3V3', 'VIN', '5V'],
+    };
+  }
+
+  it(
+    'warns when a 9 V battery is wired to an ESP32 VIN pin',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [{ id: 'bat', metadataId: 'battery-9v', properties: {} }],
+        wires: [
+          { id: 'w1', start: { componentId: 'bat', pinName: '+' }, end: { componentId: 'esp32', pinName: 'VIN' } },
+          { id: 'w2', start: { componentId: 'esp32', pinName: 'GND' }, end: { componentId: 'bat', pinName: '−' } },
+        ],
+        boards: [board('esp32', 'esp32')],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const ov = result.warnings.find((w) => w.code === 'over-voltage' && w.componentId === 'esp32');
+      expect(ov, JSON.stringify(result.warnings)).toBeDefined();
+    },
+  );
+
+  it(
+    'does NOT warn when an AA battery (1.5 V) powers the VIN pin',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [{ id: 'bat', metadataId: 'battery-aa', properties: {} }],
+        wires: [
+          { id: 'w1', start: { componentId: 'bat', pinName: '+' }, end: { componentId: 'esp32', pinName: 'VIN' } },
+          { id: 'w2', start: { componentId: 'esp32', pinName: 'GND' }, end: { componentId: 'bat', pinName: '−' } },
+        ],
+        boards: [board('esp32', 'esp32')],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      expect(result.warnings.map((w) => w.code)).not.toContain('over-voltage');
+    },
+  );
+});
+
+describe('verifyCircuit — electrolytic capacitor', () => {
+  function cap(id: string, voltage: string): BuildNetlistInput['components'][number] {
+    return { id, metadataId: 'capacitor-electrolytic', properties: { value: '10u', voltage } };
+  }
+
+  it(
+    'warns when the voltage across it exceeds its rating',
+    { timeout: 30_000 },
+    async () => {
+      // 24 V across a 16 V cap.
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 24), cap('c1', '16')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['c1', '+']),
+          w('w2', ['c1', '−'], ['src', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const ov = result.warnings.find((x) => x.code === 'over-voltage' && x.componentId === 'c1');
+      expect(ov, JSON.stringify(result.warnings)).toBeDefined();
+    },
+  );
+
+  it(
+    'does NOT warn when within its rating',
+    { timeout: 30_000 },
+    async () => {
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), cap('c2', '25')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['c2', '+']),
+          w('w2', ['c2', '−'], ['src', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      expect(result.warnings.map((x) => x.code)).not.toContain('over-voltage');
+      expect(result.warnings.map((x) => x.code)).not.toContain('reverse-polarity');
+    },
+  );
+
+  it(
+    'warns on reverse polarity',
+    { timeout: 30_000 },
+    async () => {
+      // +5 V on the minus pin, plus pin to ground → reverse-biased.
+      const input: BuildNetlistInput = {
+        components: [pwr('src', 5), cap('c3', '25')],
+        wires: [
+          w('w1', ['src', 'SIG'], ['c3', '−']),
+          w('w2', ['c3', '+'], ['src', 'GND']),
+        ],
+        boards: [],
+        analysis: { kind: 'op' },
+      };
+      const result = await verifyCircuit(input);
+      const rp = result.warnings.find((x) => x.code === 'reverse-polarity' && x.componentId === 'c3');
+      expect(rp, JSON.stringify(result.warnings)).toBeDefined();
+    },
+  );
+});
+
 // ── Sanity: shipping examples never trigger errors ─────────────────────────
 // If any gallery example produces a verifier error, that's a bug in the
 // example itself. Loop a handful of representative ones to catch

@@ -185,6 +185,7 @@ export function buildInputFromStore(snap: StoreSnapshot): BuildNetlistInput {
     const group = BOARD_PIN_GROUPS[b.boardKind] ?? BOARD_PIN_GROUPS.default;
     return {
       id: b.id,
+      boardKind: b.boardKind,
       vcc: group.vcc,
       pins: b.pinStates,
       groundPinNames: group.gnd,

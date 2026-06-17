@@ -3589,10 +3589,29 @@
           "type": "string",
           "defaultValue": "1u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "1u"
+        "value": "1u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "cap-elec-1u",
@@ -3615,10 +3634,29 @@
           "type": "string",
           "defaultValue": "10u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "10u"
+        "value": "10u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "cap-elec-10u",
@@ -3641,10 +3679,29 @@
           "type": "string",
           "defaultValue": "100u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "100u"
+        "value": "100u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "cap-elec-100u",
@@ -3667,10 +3724,29 @@
           "type": "string",
           "defaultValue": "1000u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "1000u"
+        "value": "1000u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "cap-elec-1000u",
@@ -3693,10 +3769,29 @@
           "type": "string",
           "defaultValue": "47u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "47u"
+        "value": "47u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "cap-elec-47u",
@@ -3719,10 +3814,29 @@
           "type": "string",
           "defaultValue": "470u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "470u"
+        "value": "470u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "cap-elec-470u",
@@ -3744,10 +3858,29 @@
           "type": "string",
           "defaultValue": "10u",
           "control": "text"
+        },
+        {
+          "name": "voltage",
+          "type": "string",
+          "control": "select",
+          "options": [
+            "6.3",
+            "10",
+            "16",
+            "25",
+            "35",
+            "50",
+            "63",
+            "100",
+            "200",
+            "400"
+          ],
+          "defaultValue": "25"
         }
       ],
       "defaultValues": {
-        "value": "10u"
+        "value": "10u",
+        "voltage": "25"
       },
       "pinCount": 0,
       "id": "capacitor-electrolytic",
