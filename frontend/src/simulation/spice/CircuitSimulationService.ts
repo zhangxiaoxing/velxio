@@ -391,7 +391,14 @@ export class CircuitSimulationService {
     const unsubscribe = this.simStore.subscribe((next, prev) => {
       const n = next as ReturnType<typeof this.simStore.getState>;
       const p = prev as ReturnType<typeof this.simStore.getState>;
-      if (n.components !== p.components || n.wires !== p.wires || n.boards !== p.boards) {
+      if (
+        n.components !== p.components ||
+        n.wires !== p.wires ||
+        n.boards !== p.boards ||
+        // P4: a part burning out (or a Reset un-burning it) changes which
+        // components are in the netlist, so re-solve to apply the open.
+        n.burntComponents !== p.burntComponents
+      ) {
         void this.tick();
       }
     });
