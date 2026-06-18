@@ -1,5 +1,6 @@
 import { PartSimulationRegistry } from './PartSimulationRegistry';
 import { useElectricalStore } from '../../store/useElectricalStore';
+import { useSimulatorStore } from '../../store/useSimulatorStore';
 import { emitPropertyChange } from './partUtils';
 
 /**
@@ -171,6 +172,14 @@ const LED_BURNOUT_A = 0.1;
 /** Surface a circuit fault for an LED — console + a UI event the toolbar shows. */
 function reportLedFault(componentId: string, kind: string, message: string): void {
   console.warn(`[led] ${componentId}: ${message}`);
+  // Mark it destroyed in the shared burnt set (P4): the canvas renders it
+  // charred + a smoke badge, and the solver opens it — same treatment as a
+  // burnt resistor/capacitor. (The LED also goes dark via its own update.)
+  try {
+    useSimulatorStore.getState().markComponentBurnt?.(componentId);
+  } catch {
+    /* store unavailable (test env) — ignore */
+  }
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     try {
       window.dispatchEvent(

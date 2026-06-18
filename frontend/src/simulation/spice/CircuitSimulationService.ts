@@ -40,6 +40,9 @@ export interface SimulatorStorePort {
       end: { componentId: string; pinName: string };
     }>;
     boards: Array<{ id: string; boardKind: string; pinStates?: Record<string, unknown> }>;
+    /** Components destroyed at runtime (P4) — excluded from the netlist so a
+     *  burnt part actually goes open. Optional for non-store ports. */
+    burntComponents?: Set<string>;
   };
   subscribe(listener: (state: unknown, prev: unknown) => void): () => void;
 }
@@ -279,8 +282,14 @@ export class CircuitSimulationService {
 
   private async runSolve(): Promise<void> {
     const state = this.simStore.getState();
+    // P4: a runtime-destroyed part is excluded from the netlist so it actually
+    // goes open — its current stops and anything it fed loses power (cascading
+    // failure), the way real hardware behaves once a component burns out.
+    const burnt = state.burntComponents;
+    const liveComponents =
+      burnt && burnt.size > 0 ? state.components.filter((c) => !burnt.has(c.id)) : state.components;
     const snap = {
-      components: state.components,
+      components: liveComponents,
       wires: state.wires,
       boards: state.boards.map((b) => ({
         id: b.id,
