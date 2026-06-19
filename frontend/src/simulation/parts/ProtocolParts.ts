@@ -64,7 +64,12 @@ class SSD1306Core {
   private colEnd = 127;
   private pageStart = 0;
   private pageEnd = 7;
-  private memMode = 0; // 0=horizontal, 1=vertical, 2=page
+  // 0=horizontal, 1=vertical, 2=page. SSD1306 power-on default is PAGE
+  // addressing (datasheet 10b). Adafruit_SSD1306 overrides it to horizontal
+  // via 0x20,0x00; page-mode drivers (Tiny4kOLED, U8g2 page buffer) rely on
+  // this default and never send 0x20 — so the default MUST be 2 or their
+  // setCursor (0xB0-0xB7 + 0x00-0x1F) renders garbled.
+  private memMode = 2;
 
   // Multi-byte command accumulation
   private cmdBuf: number[] = [];
@@ -125,7 +130,19 @@ class SSD1306Core {
         this.page = this.pageStart;
         break;
       default:
-        if (cmd >= 0x40 && cmd <= 0x7f) {
+        // Page-addressing-mode cursor commands (single-byte). Used by
+        // Tiny4kOLED / U8g2 page buffer / classic SSD1306 drivers whose
+        // setCursor() does NOT use the 0x21/0x22 column/page-range commands.
+        if (cmd >= 0xb0 && cmd <= 0xb7) {
+          // set page start address (B0..B7 → page 0..7)
+          this.page = cmd & 0x07;
+        } else if (cmd <= 0x0f) {
+          // set lower column nibble (0x00..0x0F)
+          this.col = (this.col & 0xf0) | (cmd & 0x0f);
+        } else if (cmd >= 0x10 && cmd <= 0x1f) {
+          // set higher column nibble (0x10..0x1F)
+          this.col = (this.col & 0x0f) | ((cmd & 0x0f) << 4);
+        } else if (cmd >= 0x40 && cmd <= 0x7f) {
           /* display start line — visual, skip */
         }
         break;

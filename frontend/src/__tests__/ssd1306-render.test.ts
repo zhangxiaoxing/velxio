@@ -169,6 +169,36 @@ describe('SSD1306 — ImageData rendering (syncElement fix)', () => {
     expect(px[idxOff + 2]).toBe(0);
   });
 
+  it('page addressing (Tiny4kOLED): 0xB0+page / 0x00-0x1F col, no 0x20, cursor persists across data streams', () => {
+    const el = makeOLEDElement();
+    const sim = makeSim();
+    PartSimulationRegistry.get('ssd1306')!.attachEvents!(el, sim as any, () => null);
+    const device = sim._devices[0];
+
+    // Page-addressing setCursor: page 1, column 8 (col high nibble = 0x10,
+    // col low nibble = 0x08). No 0x20 — relies on the power-on page-mode
+    // default that Tiny4kOLED / U8g2-page / classic SSD1306 drivers assume.
+    sendCommandStream(device, [0xb1, 0x10, 0x08]);
+    // TinyWireM flushes its small buffer as distinct 16-byte I2C transactions,
+    // so the column pointer MUST persist across separate data streams.
+    sendDataStream(device, [0xff, 0x00]); // col 8, 9
+    sendDataStream(device, [0x00, 0xff]); // col 10, 11 — cursor continued
+
+    const px = el.imageData.data;
+    const lit = (row: number, col: number) => {
+      const i = (row * 128 + col) * 4;
+      return px[i] + px[i + 1] + px[i + 2] > 0;
+    };
+    // page 1 → rows 8..15; 0xff lights the whole 8-pixel column.
+    expect(lit(8, 8)).toBe(true);
+    expect(lit(15, 8)).toBe(true);
+    expect(lit(8, 9)).toBe(false); // 0x00
+    expect(lit(8, 10)).toBe(false); // 0x00 (start of 2nd stream)
+    // col 11 lit proves the cursor advanced across the STOP/new transaction.
+    expect(lit(8, 11)).toBe(true);
+    expect(lit(15, 11)).toBe(true);
+  });
+
   it('fills all 1024 GDDRAM bytes via horizontal addressing', () => {
     const el = makeOLEDElement();
     const sim = makeSim();
