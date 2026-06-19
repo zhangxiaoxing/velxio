@@ -230,6 +230,12 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
     x: number;
     y: number;
   } | null>(null);
+  // Right-click context menu for a wire (color swatches + delete).
+  const [wireContextMenu, setWireContextMenu] = useState<{
+    wireId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   // Board removal confirmation dialog
   const [boardToRemove, setBoardToRemove] = useState<string | null>(null);
   // Board Options modal — id of the board whose options are being edited.
@@ -2431,7 +2437,23 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
           }}
           onContextMenu={(e) => {
             e.preventDefault();
-            if (wireInProgress) cancelWireCreation();
+            if (wireInProgress) {
+              cancelWireCreation();
+              return;
+            }
+            // Right-click on a wire → open its color / delete context menu.
+            // Right-clicks on a board are handled by the board element's own
+            // onContextMenu (which stops propagation), so this only fires over
+            // empty canvas or a wire. Disabled while the simulation runs
+            // (canvas is interact-only then).
+            if (interactionRunning) return;
+            const world = toWorld(e.clientX, e.clientY);
+            const threshold = 8 / zoomRef.current;
+            const wire = findWireNearPoint(wiresRef.current, world.x, world.y, threshold);
+            if (wire) {
+              setSelectedWire(wire.id);
+              setWireContextMenu({ wireId: wire.id, x: e.clientX, y: e.clientY });
+            }
           }}
           onClick={(e) => {
             if (wireInProgress) {
@@ -2592,14 +2614,16 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             />
           )}
 
-          {/* Floating action bar for the current selection — primary delete UI
-              for touch devices (no Delete key, no right-click). Hidden:
-              - while creating a wire (would fight the wire-mode banner)
-              - on desktop (delete is bound to the Delete key, rotate is in
-                the right-click menu — the floating bar covered nearby pins
-                and intercepted clicks on buttons during simulation)
-              - while the simulator is running (canvas is read-only). */}
-          {!wireInProgress && isTouchDevice && !interactionRunning &&
+          {/* Floating action bar (top-center) for the current selection. Hidden
+              while creating a wire (fights the wire-mode banner) and while the
+              simulator is running (canvas is read-only).
+              - WIRE selection shows on BOTH desktop and touch: it carries the
+                color palette, which is otherwise only reachable on desktop via
+                the 0-9 / c,l,m,p,y keyboard shortcuts (not discoverable). The
+                bar is pinned top-center so it never covers pins near the wire.
+              - COMPONENT selection stays touch-only — desktop already has the
+                Delete key + the right-click rotate menu. */}
+          {!wireInProgress && !interactionRunning &&
             (() => {
               if (selectedWireId) {
                 const wire = wires.find((w) => w.id === selectedWireId);
@@ -2613,7 +2637,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                       recordUpdateWire(selectedWireId, { color: wire.color }, { color });
                     }}
                     onDelete={() => {
-                      // Recorded so the touch / mobile delete is also undoable.
+                      // Recorded so the delete is also undoable.
                       recordRemoveWire(selectedWireId);
                       setSelectedWire(null);
                     }}
@@ -2621,7 +2645,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                   />
                 );
               }
-              if (selectedComponentId) {
+              if (isTouchDevice && selectedComponentId) {
                 const c = components.find((x) => x.id === selectedComponentId);
                 if (!c) return null;
                 const meta = registry.getById(c.metadataId);
@@ -2855,6 +2879,104 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
       />
 
       {/* Board right-click context menu */}
+      {wireContextMenu &&
+        (() => {
+          const wire = wires.find((w) => w.id === wireContextMenu.wireId);
+          if (!wire) return null;
+          return (
+            <>
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+                onClick={() => setWireContextMenu(null)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setWireContextMenu(null);
+                }}
+              />
+              <div
+                style={{
+                  position: 'fixed',
+                  left: wireContextMenu.x,
+                  top: wireContextMenu.y,
+                  background: '#252526',
+                  border: '1px solid #3c3c3c',
+                  borderRadius: 6,
+                  padding: 8,
+                  zIndex: 9999,
+                  width: 188,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ padding: '2px 4px 8px', color: '#888', fontSize: 11 }}>
+                  {t('editor.selectionBar.changeColor')}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {Object.values(WIRE_KEY_COLORS).map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      title={color}
+                      onClick={() => {
+                        recordUpdateWire(
+                          wireContextMenu.wireId,
+                          { color: wire.color },
+                          { color },
+                        );
+                        setWireContextMenu(null);
+                      }}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: '50%',
+                        backgroundColor: color,
+                        border:
+                          color.toLowerCase() === wire.color?.toLowerCase()
+                            ? '2px solid #fff'
+                            : '1px solid rgba(255,255,255,0.2)',
+                        cursor: 'pointer',
+                        padding: 0,
+                        flexShrink: 0,
+                      }}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    recordRemoveWire(wireContextMenu.wireId);
+                    setSelectedWire(null);
+                    setWireContextMenu(null);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    marginTop: 8,
+                    padding: '7px 6px',
+                    background: 'none',
+                    border: 'none',
+                    borderTop: '1px solid #3c3c3c',
+                    color: '#e06c75',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    textAlign: 'left',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#2a2d2e';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'none';
+                  }}
+                >
+                  {t('editor.selectionBar.deleteKind.wire')}
+                </button>
+              </div>
+            </>
+          );
+        })()}
+
       {boardContextMenu &&
         (() => {
           const board = boards.find((b) => b.id === boardContextMenu.boardId);
