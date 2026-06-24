@@ -575,10 +575,16 @@ function makeGpioRoutingClearHandler(boardId: string) {
 function makePinPullHandler(boardId: string) {
   return (gpio: number, pull: 0 | 1 | 2) => {
     pinManagerMap.get(boardId)?.setPinPull(gpio, pull);
-    // The pull adds/removes a netlist resistor (structural change), so a full
-    // re-solve is needed. It also matters at idle: nothing else triggers a
-    // solve while the firmware just polls digitalRead, so without this an
-    // INPUT_PULLUP input stays stuck at the floating 0 V the last solve found.
+    // Drive the digital input to the pull's idle level so the firmware's
+    // digitalRead reflects INPUT_PULLUP / INPUT_PULLDOWN. QEMU does not model
+    // the MCU's internal pull on the GPIO input register, and the part-level
+    // HIGH seed (BasicParts) is sent at component-attach — before the
+    // several-second QEMU boot finishes — so it's lost and the pin reads LOW.
+    // This fires when the guest actually programs the pull (inside pinMode,
+    // post-boot), so it sticks. A real button press/release overrides it after.
+    if (pull !== 0) getBoardBridge(boardId)?.sendPinEvent?.(gpio, pull === 1);
+    // The pull also feeds the SPICE netlist (a weak resistor); re-solve so the
+    // electrical view matches.
     requestElectricalResolve();
   };
 }

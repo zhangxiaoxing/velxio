@@ -540,14 +540,34 @@ def main() -> None:  # noqa: C901  (complexity OK for inline worker)
         100 ms from the LEDC poll thread (off the QEMU iothread, so the
         _emit here can't stall the guest the way _on_gpio_matrix would).
         """
+        # RTC-capable GPIOs route their pull through the RTC_IO peripheral
+        # (RTC pad RUE/RDE bits), not IO_MUX — so a button on GPIO4/15/etc.
+        # with INPUT_PULLUP is invisible in muxgpios. Read both and let RTC win
+        # for its pads. Map: GPIO -> (rtcio word index, RUE bit, RDE bit), from
+        # the esp32 rtc_gpio_desc table (TOUCH_PADn / PDAC / XTAL_32K pads).
+        rtc_map = {
+            0: (0x98 >> 2, 27, 28), 2: (0x9c >> 2, 27, 28), 4: (0x94 >> 2, 27, 28),
+            12: (0xa8 >> 2, 27, 28), 13: (0xa4 >> 2, 27, 28), 14: (0xac >> 2, 27, 28),
+            15: (0xa0 >> 2, 27, 28), 25: (0x84 >> 2, 27, 28), 26: (0x88 >> 2, 27, 28),
+            27: (0xb0 >> 2, 27, 28), 32: (0x8c >> 2, 22, 23), 33: (0x8c >> 2, 27, 28),
+        }
         try:
+            pulls: dict[int, int] = {}
             iomux_ptr = lib.qemu_picsimlab_get_internals(3)  # QEMU_INTERNAL_IOMUX_GPIOS
-            if not iomux_ptr:
-                return
-            mux = (ctypes.c_uint32 * 40).from_address(iomux_ptr)
-            for gpio_pin in range(40):
-                reg = int(mux[gpio_pin])
-                pull = 1 if (reg >> 8) & 1 else (2 if (reg >> 7) & 1 else 0)
+            if iomux_ptr:
+                mux = (ctypes.c_uint32 * 40).from_address(iomux_ptr)
+                for gpio_pin in range(40):
+                    reg = int(mux[gpio_pin])
+                    pulls[gpio_pin] = 1 if (reg >> 8) & 1 else (2 if (reg >> 7) & 1 else 0)
+            rtcio_ptr = lib.qemu_picsimlab_get_internals(10)  # QEMU_INTERNAL_RTCIO
+            if rtcio_ptr:
+                rtc = (ctypes.c_uint32 * 256).from_address(rtcio_ptr)
+                for gpio_pin, (idx, ub, db) in rtc_map.items():
+                    reg = int(rtc[idx])
+                    rtc_pull = 1 if (reg >> ub) & 1 else (2 if (reg >> db) & 1 else 0)
+                    if rtc_pull:
+                        pulls[gpio_pin] = rtc_pull  # RTC pad pull is authoritative
+            for gpio_pin, pull in pulls.items():
                 if _pull_state.get(gpio_pin, 0) != pull:
                     _pull_state[gpio_pin] = pull
                     _emit({'type': 'gpio_pull', 'pin': gpio_pin, 'pull': pull})
