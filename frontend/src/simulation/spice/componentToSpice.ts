@@ -639,14 +639,29 @@ const MAPPERS: Record<string, Mapper> = {
     };
   },
 
-  // Switch / pushbutton
+  // Switch / pushbutton — a real 4-pin tactile switch. The two legs of each
+  // terminal are internally shorted (1.l is the same node as 1.r; 2.l as 2.r),
+  // and pressing bridges terminal 1 to terminal 2. Modelling BOTH legs (not
+  // just 1.l/2.l) means a user can wire GND/GPIO to any leg and it behaves like
+  // hardware — and wiring both a GPIO and GND to the SAME terminal is a dead
+  // short, exactly as on a real button. Back-compat: 2-pin variants expose A/B.
   pushbutton: (comp, netLookup) => {
-    const pins = twoPin(comp, netLookup, '1.l', '2.l');
-    const alt = pins ?? twoPin(comp, netLookup, 'A', 'B');
-    if (!alt) return null;
-    const pressed = Boolean(comp.properties.pressed);
-    const R = pressed ? 0.01 : 1e9;
-    return emitResistor(comp, alt, R);
+    const t1l = netLookup('1.l');
+    const t1r = netLookup('1.r');
+    const t2l = netLookup('2.l');
+    const t2r = netLookup('2.r');
+    const cards: string[] = [];
+    // Internal shorts between the two legs of a terminal, when both are wired.
+    if (t1l && t1r && t1l !== t1r) cards.push(`R_${comp.id}_t1 ${t1l} ${t1r} 0.01`);
+    if (t2l && t2r && t2l !== t2r) cards.push(`R_${comp.id}_t2 ${t2l} ${t2r} 0.01`);
+    // The switch itself: terminal 1 to terminal 2 (prefer the .l leg's net).
+    const term1 = t1l ?? t1r ?? netLookup('A');
+    const term2 = t2l ?? t2r ?? netLookup('B');
+    if (term1 && term2) {
+      const R = Boolean(comp.properties.pressed) ? 0.01 : 1e9;
+      cards.push(`R_${comp.id}_sw ${term1} ${term2} ${R}`);
+    }
+    return cards.length ? { cards, modelsUsed: new Set() } : null;
   },
   'slide-switch': (comp, netLookup) => {
     const pins = twoPin(comp, netLookup, '1', '2');

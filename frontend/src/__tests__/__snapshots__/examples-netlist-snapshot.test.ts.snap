@@ -92,8 +92,8 @@ exports[`netlist snapshot — 100-days (49 examples) > 100d-esp32-ir-sensor-tele
 
 exports[`netlist snapshot — 100-days (49 examples) > 100d-esp32-oled-smart-ui-eyes-animation-time-and-weather-micropython 1`] = `
 "* Velxio circuit
-R_btn-next n4 n0 1000000000
-R_btn-sel n4 n1 1000000000
+R_btn-next_sw n4 n0 1000000000
+R_btn-sel_sw n4 n1 1000000000
 R_autopull_n0 n0 0 100Meg
 R_autopull_n1 n1 0 100Meg
 R_autopull_n2 n2 0 100Meg
@@ -1166,9 +1166,9 @@ R_autopull_n6 n6 0 100Meg
 
 exports[`netlist snapshot — circuits (41 examples) > full-adder 1`] = `
 "* Velxio circuit
-R_bA n0 n5 1000000000
-R_bB n1 n5 1000000000
-R_bCin n2 n5 1000000000
+R_bA_sw n0 n5 1000000000
+R_bB_sw n1 n5 1000000000
+R_bCin_sw n2 n5 1000000000
 R_rSum n3 n7 220
 R_rCout n4 n6 220
 V_sumLed_sense n7 sumLed_sense_mid DC 0
@@ -1393,8 +1393,8 @@ R_autopull_n10 n10 0 100Meg
 
 exports[`netlist snapshot — circuits (41 examples) > nand-sr-latch 1`] = `
 "* Velxio circuit
-R_setBtn n5 n6 1000000000
-R_rstBtn n4 n6 1000000000
+R_setBtn_sw n5 n6 1000000000
+R_rstBtn_sw n4 n6 1000000000
 R_rpuS n0 n5 10000
 R_rpuR n0 n4 10000
 B_g1 n1 0 V = 5 * (1 - u(V(n5)-2.5) * u(V(n2)-2.5))
@@ -1905,8 +1905,8 @@ R_autopull_n3 n3 0 100Meg
 
 exports[`netlist snapshot — circuits (41 examples) > xor-toggle-detector 1`] = `
 "* Velxio circuit
-R_sw1 n0 n5 1000000000
-R_sw2 n1 n5 1000000000
+R_sw1_sw n0 n5 1000000000
+R_sw2_sw n1 n5 1000000000
 B_u1 n6 0 V = 5 * (u(V(n2)-2.5) + u(V(n3)-2.5) - 2*u(V(n2)-2.5)*u(V(n3)-2.5))
 R_u1_load n6 0 1Meg
 R_rl n6 n4 220

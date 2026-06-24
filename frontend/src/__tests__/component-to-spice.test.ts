@@ -222,6 +222,49 @@ describe('PASSIVE_PRESETS — preset variants share their base mapper', () => {
   });
 });
 
+describe('pushbutton — 4-pin tactile model', () => {
+  const lookup = (wired: Record<string, string>) => (pin: string) => wired[pin] ?? null;
+  const emit = (wired: Record<string, string>, pressed = false) =>
+    componentToSpice(
+      { id: 'b1', metadataId: 'pushbutton', properties: { pressed } },
+      lookup(wired),
+      { vcc: 3.3 },
+    );
+
+  it('switches between terminal 1 and 2 wired on the .l legs', () => {
+    const e = emit({ '1.l': 'gpio', '2.l': 'gnd' });
+    expect(e!.cards).toEqual(['R_b1_sw gpio gnd 1000000000']);
+  });
+
+  it('works wired on the .r legs too (terminal legs are interchangeable)', () => {
+    const e = emit({ '1.r': 'gpio', '2.r': 'gnd' });
+    expect(e!.cards).toEqual(['R_b1_sw gpio gnd 1000000000']);
+  });
+
+  it('pressing closes the switch (low resistance)', () => {
+    const e = emit({ '1.l': 'gpio', '2.l': 'gnd' }, true);
+    expect(e!.cards).toEqual(['R_b1_sw gpio gnd 0.01']);
+  });
+
+  it('GPIO and GND on the SAME terminal is a dead short, like real hardware', () => {
+    // The classic miswire: GND lands on 1.r while the GPIO is on 1.l. Both legs
+    // belong to terminal 1, so they are internally shorted — the pin can never
+    // read anything but the GND it is tied to, and there is no switch path.
+    const e = emit({ '1.l': 'gpio', '1.r': 'gnd' });
+    expect(e!.cards).toEqual(['R_b1_t1 gpio gnd 0.01']);
+    expect(e!.cards.some((c) => c.includes('_sw'))).toBe(false);
+  });
+
+  it('back-compat: 2-pin A/B variant still emits a switch', () => {
+    const e = emit({ A: 'n1', B: 'n2' });
+    expect(e!.cards).toEqual(['R_b1_sw n1 n2 1000000000']);
+  });
+
+  it('returns null when nothing is wired', () => {
+    expect(emit({})).toBeNull();
+  });
+});
+
 // Mappers whose output depends on live runtime state rather than the static
 // component (pins + properties) a fixture can describe. `custom-chip` emits its
 // SPICE sources from getChipDrivenPins(comp.id) — the chip's currently-driven
