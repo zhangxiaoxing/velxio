@@ -1252,6 +1252,16 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       });
       // Create the editor file group for this board
       useEditorStore.getState().createFileGroup(`group-${id}`);
+      // If this board is now the active one (it's the first board, or the
+      // previously-active board was removed), point the editor at its file
+      // group too. The canvas board picker calls addBoard directly WITHOUT
+      // setActiveBoardId (which is the only other place that syncs the editor
+      // group), so without this the editor keeps editing the previous/deleted
+      // board's group while compile reads THIS board's group — the code you
+      // type is silently dropped and the board runs its default sketch.
+      if (get().activeBoardId === id) {
+        useEditorStore.getState().setActiveGroup(`group-${id}`);
+      }
       // Init VFS for Raspberry Pi 3 boards
       if (isPiBoardKind(boardKind)) {
         useVfsStore.getState().initBoardVfs(id);
@@ -1312,6 +1322,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       // Clean up file group in editor store
       if (board) {
         useEditorStore.getState().deleteFileGroup(board.activeFileGroupId);
+      }
+      // The removed board may have been the active one; activeBoardId was just
+      // reassigned (above) to a remaining board, or null. Re-point the editor's
+      // active file group at whatever board is active now, so the editor never
+      // keeps showing/editing the deleted board's group.
+      const newActiveId = get().activeBoardId;
+      if (newActiveId) {
+        const nb = get().boards.find((b) => b.id === newActiveId);
+        if (nb) useEditorStore.getState().setActiveGroup(nb.activeFileGroupId);
       }
       // ── Interconnect: drop board and rebuild routes ──────────────────
       icUnbindBoard(boardId);

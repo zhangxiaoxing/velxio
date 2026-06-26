@@ -301,6 +301,30 @@ describe('useSimulatorStore — multi-board', () => {
     expect(boards.find((b) => b.id === id)).toBeUndefined();
   });
 
+  it('delete-all then addBoard re-points the editor file group at the new board', () => {
+    // Regression: deleting the default Uno and adding a different board (e.g. a
+    // Pico) via the canvas picker left the editor editing the deleted board's
+    // file group while compile read the NEW board's (default) group — so code
+    // typed into the editor was silently dropped and the board ran its default
+    // sketch. addBoard/removeBoard must keep the editor's active group in sync
+    // with the active board.
+    const sim = useSimulatorStore.getState();
+    sim.boards.map((b) => b.id).forEach((bid) => sim.removeBoard(bid));
+    const picoId = useSimulatorStore.getState().addBoard('raspberry-pi-pico', 0, 0);
+
+    expect(useSimulatorStore.getState().activeBoardId).toBe(picoId);
+    const board = useSimulatorStore.getState().boards.find((b) => b.id === picoId)!;
+    expect(board.activeFileGroupId).toBe(`group-${picoId}`);
+    // The editor's active group must follow the active board.
+    expect(useEditorStore.getState().activeGroupId).toBe(board.activeFileGroupId);
+
+    // And editing the active file lands in the group that compile reads.
+    const editor = useEditorStore.getState();
+    editor.setFileContent(editor.activeFileId, '// PICO SKETCH MARKER');
+    const groupFiles = useEditorStore.getState().getGroupFiles(board.activeFileGroupId);
+    expect(groupFiles.some((f) => f.content.includes('PICO SKETCH MARKER'))).toBe(true);
+  });
+
   it('setActiveBoardId switches legacy flat fields', () => {
     const { addBoard, setActiveBoardId } = useSimulatorStore.getState();
     addBoard('arduino-mega', 0, 0);
