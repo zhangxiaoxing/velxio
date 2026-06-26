@@ -50,7 +50,6 @@ function createElectricalStorePort(): ElectricalStorePort {
         error: snapshot.warnings[0] ?? null,
         lastSolveMs: 0,
         submittedNetlist: '',
-        sourcedNets: snapshot.sourcedNets,
       });
     },
   };

@@ -67,18 +67,6 @@ export interface BuildNetlistResult {
    * request branch currents (`i(v_<name>)`).
    */
   voltageSources: string[];
-  /**
-   * Nets that are backed by a real electrical source/element — a power rail
-   * ('0' / 'vcc_rail'), a board GPIO V-source, an internal pull resistor, or
-   * any net a componentToSpice mapper emitted a card for (resistor, button
-   * switch, divider, etc.). Excludes purely-floating nets (which only get the
-   * step-7 auto-pull-down). `connectDigitalInputsToMcu` drives an MCU input pin
-   * from the solve ONLY when its net is in here, so event-driven parts with no
-   * SPICE model (rotary encoder, keypad, dialer, dip-switch, stepper) keep
-   * driving their own pins via the part layer instead of being forced LOW by a
-   * floating-net read.
-   */
-  sourcedNets: Set<string>;
 }
 
 export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
@@ -150,11 +138,6 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
   const cards: string[] = [];
   const modelLines = new Set<string>();
   const dominantVcc = boards[0]?.vcc ?? 5;
-  // Nets backed by a real source/element (see BuildNetlistResult.sourcedNets).
-  // Rails are always sourced; component + GPIO-source + pull nets are added
-  // below. Deliberately NOT populated from the step-7 auto-pull-down cards,
-  // since those mark FLOATING nets.
-  const sourcedNets = new Set<string>(['0', 'vcc_rail']);
 
   for (const comp of components) {
     const localLookup = (pinName: string) => netLookup(comp.id, pinName);
@@ -162,11 +145,6 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     if (!emission) continue;
     cards.push(...emission.cards);
     for (const m of emission.modelsUsed) modelLines.add(m);
-    // Every net this component connects to now has a real SPICE element on it.
-    for (const pinName of pinsReferencedByWires(comp.id, wires)) {
-      const n = netLookup(comp.id, pinName);
-      if (n) sourcedNets.add(n);
-    }
   }
 
   // ── 5. Board GPIO sources ─────────────────────────────────────────────────
@@ -196,7 +174,6 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
           cards.push(
             `R_pull_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)} ${net} ${rail} 45000`,
           );
-          sourcedNets.add(net); // weak pull to a rail → determinate idle level
         }
         continue;
       }
@@ -204,7 +181,6 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
       if (net === '0' || net === 'vcc_rail') continue; // already served
       const v = state.type === 'digital' ? state.v : state.duty * board.vcc;
       cards.push(`V_${sanitizeSpiceId(board.id)}_${sanitizeSpiceId(pinName)} ${net} 0 DC ${v}`);
-      sourcedNets.add(net); // board GPIO V-source drives this net (e.g. cross-board input)
     }
   }
 
@@ -227,8 +203,6 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     const b = netLookup(w.end.componentId, w.end.pinName);
     if (!a || !b) continue;
     cards.push(`R_wire_${w.id} ${a} ${b} ${ohms}`);
-    sourcedNets.add(a);
-    sourcedNets.add(b);
   }
 
   // ── 7. Auto pull-downs for floating nets ─────────────────────────────────
@@ -305,7 +279,6 @@ export function buildNetlist(input: BuildNetlistInput): BuildNetlistResult {
     pinNetMap,
     nets,
     voltageSources,
-    sourcedNets,
   };
 }
 

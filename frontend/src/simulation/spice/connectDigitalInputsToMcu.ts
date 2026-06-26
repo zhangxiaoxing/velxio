@@ -21,8 +21,6 @@
  */
 import { useSimulatorStore, getBoardSimulator, getBoardPinManager } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
-import { isStm32BoardKind } from '../../types/board';
-import { stm32PinNameToLinear } from '../Stm32Bridge';
 
 // 3.3 V LVCMOS thresholds with a hysteresis band so a node hovering near the
 // midpoint doesn't chatter. A pulled-up idle input sits at ~3.3 V and a
@@ -45,7 +43,7 @@ export function connectDigitalInputsToMcu(): () => void {
   const lastLevel = new Map<string, boolean>();
 
   function injectDigitalInputs() {
-    const { nodeVoltages, pinNetMap, sourcedNets } = useElectricalStore.getState();
+    const { nodeVoltages, pinNetMap } = useElectricalStore.getState();
     const { boards } = useSimulatorStore.getState();
     for (const board of boards) {
       const sim = getBoardSimulator(board.id) as
@@ -55,23 +53,11 @@ export function connectDigitalInputsToMcu(): () => void {
       const pm = getBoardPinManager(board.id);
       const driven = pm ? pm.getOutputPins() : new Set<number>();
       const prefix = `${board.id}:`;
-      // STM32 names pins PA0/PC13/… and its PinManager + setPinState key on the
-      // linear pin (port*16+pin); every other board uses plain GPIO numbers.
-      const isStm32 = isStm32BoardKind(board.boardKind);
       for (const [key, net] of pinNetMap) {
         if (!key.startsWith(prefix)) continue;
-        const pinName = key.slice(prefix.length);
-        const gpio = isStm32 ? stm32PinNameToLinear(pinName) : gpioFromPinName(pinName);
+        const gpio = gpioFromPinName(key.slice(prefix.length));
         if (gpio < 0) continue;
         if (driven.has(gpio)) continue; // the MCU drives this pin (digitalWrite)
-        // Only drive pins whose net is backed by a real source/element (rail,
-        // pull, button switch, divider, cross-board output, …). A net that is
-        // only floating (an event-driven part like a rotary encoder / keypad
-        // that has no SPICE model) is left to the part layer, which seeds the
-        // pin directly — otherwise its ~0 V floating read would force it LOW
-        // and fight the part. This is what makes it safe to enable
-        // spiceDrivenInputs on the AVR (which has many such part-driven pins).
-        if (!sourcedNets.has(net)) continue;
         const v = nodeVoltages[net];
         if (v == null) continue;
         const stateKey = `${board.id}:${gpio}`;

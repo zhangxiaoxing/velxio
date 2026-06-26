@@ -145,12 +145,6 @@ export class IdleSpinDetector {
 export type RP2040I2CDevice = I2CDevice;
 
 export class RP2040Simulator {
-  // Digital inputs are driven from the SPICE solve (connectDigitalInputsToMcu)
-  // for source-backed nets, so digitalRead reflects real wiring (a GP pin wired
-  // to a rail / button reads the right level). Floating nets are left to the
-  // part layer, so event-driven parts (encoder/keypad/…) keep working. Mirrors
-  // the AVR fix; the connector + sourcedNets gating are board-agnostic.
-  readonly spiceDrivenInputs = true;
   private rp2040: RP2040 | null = null;
   private running = false;
   private animationFrame: number | null = null;

@@ -295,15 +295,6 @@ const MEGA_PORT_CONFIGS = [
 ];
 
 export class AVRSimulator {
-  // Digital input pins are driven from the SPICE solve
-  // (connectDigitalInputsToMcu) for nets backed by a real source/element, so
-  // `digitalRead()` reflects the real wiring (a pin wired to 5V reads HIGH, a
-  // button to 5V reads HIGH when pressed) instead of a hardcoded part seed.
-  // The connector skips floating nets, so event-driven parts with no SPICE
-  // model (rotary encoder, keypad, dialer, dip-switch, stepper) keep driving
-  // their pins via the part layer. Input-control parts (button / slide-switch)
-  // check this flag and skip their direct seed — see BasicParts.spiceDriven().
-  readonly spiceDrivenInputs = true;
   private cpu: CPU | null = null;
   /** Peripherals kept alive by reference so GC doesn't collect their CPU hooks */
   private peripherals: unknown[] = [];
