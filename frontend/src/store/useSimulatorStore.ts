@@ -600,6 +600,12 @@ function makePinPullHandler(boardId: string) {
 // minus the ESP32-only WiFi / proxy-resync machinery. ──────────────────────
 class Stm32BridgeShim {
   pinManager: PinManager;
+  // Digital inputs are driven from the SPICE solve (connectDigitalInputsToMcu)
+  // for source-backed nets — digitalRead reflects the real wiring instead of a
+  // part seed. The connector maps STM32 pin names (PA0, PC13) to the linear pin
+  // setPinState expects via stm32PinNameToLinear. Floating nets stay with the
+  // part layer. Mirrors the AVR / RP2040 fix.
+  readonly spiceDrivenInputs = true;
   onSerialData: ((ch: string) => void) | null = null;
   onPinChangeWithTime: ((pin: number, state: boolean, timeMs: number) => void) | null = null;
   onBaudRateChange: ((baud: number) => void) | null = null;

@@ -21,6 +21,8 @@
  */
 import { useSimulatorStore, getBoardSimulator, getBoardPinManager } from '../../store/useSimulatorStore';
 import { useElectricalStore } from '../../store/useElectricalStore';
+import { isStm32BoardKind } from '../../types/board';
+import { stm32PinNameToLinear } from '../Stm32Bridge';
 
 // 3.3 V LVCMOS thresholds with a hysteresis band so a node hovering near the
 // midpoint doesn't chatter. A pulled-up idle input sits at ~3.3 V and a
@@ -53,9 +55,13 @@ export function connectDigitalInputsToMcu(): () => void {
       const pm = getBoardPinManager(board.id);
       const driven = pm ? pm.getOutputPins() : new Set<number>();
       const prefix = `${board.id}:`;
+      // STM32 names pins PA0/PC13/… and its PinManager + setPinState key on the
+      // linear pin (port*16+pin); every other board uses plain GPIO numbers.
+      const isStm32 = isStm32BoardKind(board.boardKind);
       for (const [key, net] of pinNetMap) {
         if (!key.startsWith(prefix)) continue;
-        const gpio = gpioFromPinName(key.slice(prefix.length));
+        const pinName = key.slice(prefix.length);
+        const gpio = isStm32 ? stm32PinNameToLinear(pinName) : gpioFromPinName(pinName);
         if (gpio < 0) continue;
         if (driven.has(gpio)) continue; // the MCU drives this pin (digitalWrite)
         // Only drive pins whose net is backed by a real source/element (rail,
