@@ -16,6 +16,8 @@
  * - PWM duty cycle tracking (for servos, RGB LEDs, buzzers)
  */
 
+import { requestElectricalResolve } from './spice/electricalResolveHook';
+
 export type PinState = boolean;
 export type PinChangeCallback = (pin: number, state: PinState) => void;
 export type AnalogCallback = (pin: number, voltage: number) => void;
@@ -155,6 +157,16 @@ export class PinManager {
     if (callbacks) {
       callbacks.forEach((cb) => cb(pin, state));
     }
+    // An MCU output edge changes the circuit: request a SPICE re-solve so the
+    // analog parts on this net (LED brightness, etc.) update. WS-backed boards
+    // (ESP32 / STM32 / Raspberry Pi) reach the electrical sim ONLY through here
+    // — previously they never triggered a re-solve, so a resistor-less LED
+    // stayed at its first solved brightness until unrelated activity (e.g.
+    // serial output) forced a solve. AVR / RP2040 already resolve at their own
+    // toggle sites. Gated to 'mcu' so the solver's own input feedback
+    // (triggerPinChange with the default 'external' source) can't create a
+    // solve loop; the hook coalesces overlapping ticks so per-edge is cheap.
+    if (source === 'mcu') requestElectricalResolve();
   }
 
   /** Pins the MCU has actively driven this session. */
