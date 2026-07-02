@@ -11,7 +11,9 @@
       "run": {
         "addBoard": "Añadir una placa para ejecutar",
         "runMicropython": "Ejecutar MicroPython",
-        "run": "Ejecutar (compila automáticamente si es necesario)"
+        "run": "Ejecutar (compila automáticamente si es necesario)",
+        "runActiveOnly": "Ejecutar solo {{name}}",
+        "options": "Opciones de ejecución"
       },
       "stop": "Detener",
       "reset": "Reiniciar",

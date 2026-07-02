@@ -11,7 +11,9 @@
       "run": {
         "addBoard": "Add a board to run",
         "runMicropython": "Run MicroPython",
-        "run": "Run (auto-compiles if needed)"
+        "run": "Run (auto-compiles if needed)",
+        "runActiveOnly": "Run only {{name}}",
+        "options": "Run options"
       },
       "stop": "Stop",
       "reset": "Reset",

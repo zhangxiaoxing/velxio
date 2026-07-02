@@ -196,6 +196,10 @@ export const EditorToolbar = ({
   // Run-All / Stop buttons (the flat `running` flag only tracks the ACTIVE
   // board, so it misreports a multi-board or non-active-board run).
   const anyBoardRunning = boards.some((b) => b.running);
+  // Multi-board: the primary Run button runs ALL boards (the whole wired
+  // project is one system — running a subset is almost never intended), with a
+  // split-menu to still run just the active board. Single-board is unchanged.
+  const isMultiBoard = boards.length > 1;
 
   // A "run target" is a board OR a programmable custom-chip (a CPU that runs a
   // ROM). When there is more than one target — two boards, a board + a chip, or
@@ -252,6 +256,9 @@ export const EditorToolbar = ({
   const [missingLibHint, setMissingLibHint] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  // Split-button menu for the multi-board Run control ("Run all" / "Run active only").
+  const [runMenuOpen, setRunMenuOpen] = useState(false);
+  const runMenuRef = useRef<HTMLDivElement>(null);
 
   // Open the Library Manager when another component (e.g. the velxio.json entry
   // in the FileExplorer) asks for it via a window event. Avoids prop-drilling
@@ -300,6 +307,25 @@ export const EditorToolbar = ({
       document.removeEventListener('keydown', onEsc);
     };
   }, [moreMenuOpen]);
+
+  // Close the Run split-menu on outside click / Escape (mirrors the more-menu).
+  useEffect(() => {
+    if (!runMenuOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (runMenuRef.current && !runMenuRef.current.contains(e.target as Node)) {
+        setRunMenuOpen(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRunMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [runMenuOpen]);
 
   // Compile All / Run All — runs sequentially, logs to console (no dialog)
   const [compileAllRunning, setCompileAllRunning] = useState(false);
@@ -1461,49 +1487,109 @@ export const EditorToolbar = ({
 
             <div className="tb-divider" />
 
-            {/* Run */}
-            <button
-              onClick={() => handleRun()}
-              disabled={
-                isBoardless
-                  ? digitalRunning || verifying
-                  : running || compiling || verifying || !activeBoard
-              }
-              className="tb-btn tb-btn-run"
-              title={
-                verifying
-                  ? t('editor.toolbar.run.verifying', 'Checking circuit...')
-                  : isBoardless
-                    ? digitalRunning
-                      ? 'Digital simulation running'
-                      : 'Resume digital simulation'
-                    : !activeBoard
-                      ? t('editor.toolbar.run.addBoard')
-                      : activeBoard?.languageMode === 'micropython'
-                        ? t('editor.toolbar.run.runMicropython')
-                        : t('editor.toolbar.run.run')
-              }
-            >
-              {verifying || compiling ? (
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="spin"
+            {/* Run — in a multi-board project this runs ALL boards (the wired
+                boards are one system; running a subset is almost never
+                intended), with a split-menu to still run only the active board.
+                Single-board / board-less behaviour is unchanged. */}
+            <div className="tb-run-split" ref={runMenuRef}>
+              <button
+                onClick={() => (isMultiBoard ? handleRunAll() : handleRun())}
+                disabled={
+                  isBoardless
+                    ? digitalRunning || verifying
+                    : isMultiBoard
+                      ? compileAllRunning || anyBoardRunning || verifying
+                      : running || compiling || verifying || !activeBoard
+                }
+                className="tb-btn tb-btn-run"
+                title={
+                  verifying
+                    ? t('editor.toolbar.run.verifying', 'Checking circuit...')
+                    : isBoardless
+                      ? digitalRunning
+                        ? 'Digital simulation running'
+                        : 'Resume digital simulation'
+                      : isMultiBoard
+                        ? t('editor.toolbar.runAll')
+                        : !activeBoard
+                          ? t('editor.toolbar.run.addBoard')
+                          : activeBoard?.languageMode === 'micropython'
+                            ? t('editor.toolbar.run.runMicropython')
+                            : t('editor.toolbar.run.run')
+                }
+              >
+                {verifying || compiling ? (
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="spin"
+                  >
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <polygon points="5,3 19,12 5,21" />
+                  </svg>
+                )}
+              </button>
+              {isMultiBoard && (
+                <button
+                  className="tb-btn tb-btn-run-caret"
+                  onClick={() => setRunMenuOpen((o) => !o)}
+                  disabled={compileAllRunning || anyBoardRunning || verifying}
+                  title={t('editor.toolbar.run.options', 'Run options')}
+                  aria-haspopup="true"
+                  aria-expanded={runMenuOpen}
                 >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                  <polygon points="5,3 19,12 5,21" />
-                </svg>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
               )}
-            </button>
+              {isMultiBoard && runMenuOpen && (
+                <div className="tb-run-menu" role="menu">
+                  <button
+                    role="menuitem"
+                    className="tb-run-menu-item"
+                    onClick={() => {
+                      setRunMenuOpen(false);
+                      handleRunAll();
+                    }}
+                  >
+                    {t('editor.toolbar.runAll')}
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="tb-run-menu-item"
+                    disabled={!activeBoard}
+                    onClick={() => {
+                      setRunMenuOpen(false);
+                      handleRun();
+                    }}
+                  >
+                    {t('editor.toolbar.run.runActiveOnly', {
+                      name: activeBoard ? boardDisplayName(activeBoard) : '',
+                      defaultValue: `Run only ${activeBoard ? boardDisplayName(activeBoard) : ''}`,
+                    })}
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Stop */}
             <button
@@ -1565,18 +1651,22 @@ export const EditorToolbar = ({
                   </svg>
                 </button>
 
-                {/* Run All */}
-                <button
-                  onClick={() => handleRunAll()}
-                  disabled={compileAllRunning || anyBoardRunning || digitalRunning}
-                  className="tb-btn tb-btn-run-all"
-                  title={t('editor.toolbar.runAll')}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                    <polygon points="3,3 11,12 3,21" />
-                    <polygon points="13,3 21,12 13,21" />
-                  </svg>
-                </button>
+                {/* Run All — only when the primary Run isn't already the
+                    "run all boards" action (i.e. board + chip or chips-only
+                    projects). For 2+ boards the split Run button covers it. */}
+                {!isMultiBoard && (
+                  <button
+                    onClick={() => handleRunAll()}
+                    disabled={compileAllRunning || anyBoardRunning || digitalRunning}
+                    className="tb-btn tb-btn-run-all"
+                    title={t('editor.toolbar.runAll')}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                      <polygon points="3,3 11,12 3,21" />
+                      <polygon points="13,3 21,12 13,21" />
+                    </svg>
+                  </button>
+                )}
               </>
             )}
           </div>
