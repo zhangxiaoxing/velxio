@@ -4,6 +4,16 @@
 
 A fully local, open-source multi-board emulator. Write Arduino C++ or Python, compile it, and simulate it with real CPU emulation and 48+ interactive electronic components — all running in your browser.
 
+> ## Serial-to-WebSocket Export (AVR boards)
+>
+> This fork adds **bidirectional raw serial byte communication** between the AVR simulator and an external host program via WebSocket. The AVR simulator acts as a WebSocket client connecting to `ws://localhost:8765/serial`, sending and receiving raw bytes (0–255) as binary frames — independent of the Serial Monitor UI.
+>
+> - **TX:** `Serial.print()` / `Serial.write()` bytes are streamed to the host program
+> - **RX:** host program can inject bytes into the simulator, readable via `Serial.read()`
+> - **AVR only:** Arduino Uno, Nano, Mega (ATmega328P / ATmega2560). Does not affect RP2040, ESP32, or ATtiny85.
+>
+> The corresponding Java host program can be found at [github.com/zhangxiaoxing/SerialJ](https://github.com/zhangxiaoxing/SerialJ). Only the **self-hosting option C** (manual install) has been tested with this modification.
+
 **19 boards &middot; 5 CPU architectures**: AVR8 (ATmega / ATtiny), ARM Cortex-M0+ (RP2040), RISC-V RV32IMC/EC (ESP32-C3 / CH32V003), Xtensa LX6/LX7 (ESP32 / ESP32-S3 via QEMU), and ARM Cortex-A53 (Raspberry Pi 3 Linux via QEMU).
 
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=davidmonterocrespo24/velxio)

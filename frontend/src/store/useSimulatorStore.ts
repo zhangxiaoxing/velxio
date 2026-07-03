@@ -20,6 +20,7 @@ import type { Wire, WireInProgress, WireEndpoint } from '../types/wire';
 import type { BoardKind, BoardInstance, LanguageMode, WifiStatus } from '../types/board';
 import { BOARD_SUPPORTS_MICROPYTHON, isPiBoardKind, isStm32BoardKind } from '../types/board';
 import { boardGateDecision, proBoardFeatureName, triggerProUpgradePrompt } from '../lib/proBoardGate';
+import { sendSerialRawByte, setOnByteReceived } from '../lib/serialRawExporter';
 import { calculatePinPosition } from '../utils/pinPositionCalculator';
 import { useOscilloscopeStore } from './useOscilloscopeStore';
 import { RaspberryPi3Bridge } from '../simulation/RaspberryPi3Bridge';
@@ -952,6 +953,7 @@ interface SimulatorState {
   toggleSerialMonitor: () => void;
   serialWrite: (text: string) => void;
   serialWriteToBoard: (boardId: string, text: string) => void;
+  serialWriteRawByte: (boardId: string, byte: number) => void;
   clearSerialOutput: () => void;
   clearBoardSerialOutput: (boardId: string) => void;
 }
@@ -979,7 +981,10 @@ function createSimulator(
     sim = new AVRSimulator(pm, 'uno');
   }
   sim.onSerialData = onSerial;
-  if (sim instanceof AVRSimulator) sim.onBaudRateChange = onBaud;
+  if (sim instanceof AVRSimulator) {
+    sim.onBaudRateChange = onBaud;
+    sim.onSerialRawByte = sendSerialRawByte;
+  }
   sim.onPinChangeWithTime = onPinTime;
   return sim;
 }
@@ -2923,6 +2928,15 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => {
       }
     },
 
+    serialWriteRawByte: (boardId: string, byte: number) => {
+      const board = get().boards.find((b) => b.id === boardId);
+      if (!board) return;
+      if (!isPiBoardKind(board.boardKind) && !isEsp32Kind(board.boardKind)) {
+        const sim = getBoardSimulator(boardId);
+        if (sim instanceof AVRSimulator) sim.serialWriteRawByte(byte);
+      }
+    },
+
     clearBoardSerialOutput: (boardId: string) => {
       const isActive = get().activeBoardId === boardId;
       set((s) => ({
@@ -2974,4 +2988,10 @@ useSimulatorStore.subscribe((state) => {
     lastWiresRef = state.wires;
     icUpdateWires(state.wires);
   }
+});
+
+// Wire inbound raw bytes from the Java server into the active board.
+setOnByteReceived((byte) => {
+  const boardId = useSimulatorStore.getState().activeBoardId ?? INITIAL_BOARD_ID;
+  useSimulatorStore.getState().serialWriteRawByte(boardId, byte);
 });
