@@ -190,3 +190,4 @@ MANIFEST.sha256
 *.sqlite-backup
 
 backend/.venv/*
+.aider*

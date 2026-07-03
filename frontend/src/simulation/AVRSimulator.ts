@@ -343,8 +343,10 @@ export class AVRSimulator {
   /** Cycle-accurate pin change queue — used by timing-sensitive peripherals (e.g. DHT22). */
   private scheduledPinChanges: Array<{ cycle: number; pin: number; state: boolean }> = [];
 
-  /** Serial output buffer — subscribers receive each byte or line */
+  /** Serial output buffer — subscribers receive each byte as a character string */
   public onSerialData: ((char: string) => void) | null = null;
+  /** Fires for every transmitted byte with the raw value (0–255) before ASCII conversion */
+  public onSerialRawByte: ((byte: number) => void) | null = null;
   /** Fires whenever the sketch changes Serial baud rate (Serial.begin) */
   public onBaudRateChange: ((baudRate: number) => void) | null = null;
   /**
@@ -505,6 +507,7 @@ export class AVRSimulator {
 
       this.usart = new AVRUSART(this.cpu, activeUsart0Config, 16000000);
       this.usart.onByteTransmit = (value: number) => {
+        if (this.onSerialRawByte) this.onSerialRawByte(value);
         if (this.onSerialData) this.onSerialData(String.fromCharCode(value));
         // Synthesize the UART frame on PD1 so the oscilloscope sees a real
         // waveform during Serial.print. See emitUartTxFrame() for details.
@@ -948,6 +951,7 @@ export class AVRSimulator {
 
         this.usart = new AVRUSART(this.cpu, usart0Config, 16000000);
         this.usart.onByteTransmit = (value: number) => {
+          if (this.onSerialRawByte) this.onSerialRawByte(value);
           if (this.onSerialData) this.onSerialData(String.fromCharCode(value));
           this.emitUartTxFrame(value);
         };
@@ -1059,6 +1063,17 @@ export class AVRSimulator {
     for (let i = 0; i < text.length; i++) {
       this.serialRxQueue.push(text.charCodeAt(i));
     }
+    this.drainSerialRxQueue();
+  }
+
+  /**
+   * Queue a single raw byte (0–255) into the USART RX pipeline.
+   * Same drain mechanism as serialWrite() — the sketch receives it via
+   * Serial.read() at the configured baud rate.
+   */
+  serialWriteRawByte(byte: number): void {
+    if (!this.usart) return;
+    this.serialRxQueue.push(byte & 0xff);
     this.drainSerialRxQueue();
   }
 

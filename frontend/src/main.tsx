@@ -18,7 +18,12 @@ import './components/velxio-components/FlipFlopElements';
 import './components/velxio-components/RaspberryPi3Element';
 import './components/velxio-components/Bmp280Element';
 import './components/velxio-components/EPaperElement';
+import { stopSerialRawExporter } from './lib/serialRawExporter';
 import App from './App.tsx';
+
+// Gracefully close the raw serial WebSocket when the page is hidden or
+// unloaded so it doesn't keep reconnecting in the background.
+window.addEventListener('pagehide', () => stopSerialRawExporter());
 
 // Configure monaco-editor for offline use via local static assets
 const monacoVsPath = `${import.meta.env.BASE_URL}monaco/vs`;
