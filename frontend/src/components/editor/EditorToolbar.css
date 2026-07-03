@@ -37,33 +37,14 @@
   gap: 4px;
 }
 
-/* Center slot — fills the gap between left/right groups, allows file tabs
-   to scroll horizontally inside it without pushing the icons off-screen. */
+/* Center slot — a flexible spacer between the left and right action groups
+   that keeps the right icons pinned to the far right. Normally empty. */
 .toolbar-center-slot {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: stretch;
   overflow: hidden;
-}
-.toolbar-center-slot > .file-tabs {
-  flex: 1;
-  min-width: 0;
-  border-bottom: none;
-  background: transparent;
-  min-height: 0;
-  height: 100%;
-}
-.toolbar-center-slot .file-tab {
-  height: 100%;
-  padding: 0 8px;
-  min-width: 70px;
-  max-width: 160px;
-  font-size: 11.5px;
-}
-.toolbar-center-slot .file-tab-active {
-  background: #1e1e1e;
-  border-top: 2px solid var(--color-action-primary);
 }
 
 /* ── Divider ─────────────────────────────────────── */

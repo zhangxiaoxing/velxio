@@ -8,7 +8,6 @@ import { startSimulation } from '../simulation/spice/start';
 import { useSEO } from '../utils/useSEO';
 import { CodeEditor } from '../components/editor/CodeEditor';
 import { EditorToolbar } from '../components/editor/EditorToolbar';
-import { FileTabs } from '../components/editor/FileTabs';
 import { FileExplorer } from '../components/editor/FileExplorer';
 
 // Lazy-load Pi workspace so xterm.js isn't in the main bundle
@@ -491,7 +490,6 @@ export const EditorPage: React.FC = () => {
               setConsoleOpen={setConsoleOpen}
               compileLogs={compileLogs}
               setCompileLogs={setCompileLogs}
-              centerSlot={!isLinuxPi ? <FileTabs /> : null}
             />
           </div>
           <div className="unified-toolbar-canvas" ref={setCanvasHeaderSlot} />
@@ -572,7 +570,6 @@ export const EditorPage: React.FC = () => {
                     setConsoleOpen={setConsoleOpen}
                     compileLogs={compileLogs}
                     setCompileLogs={setCompileLogs}
-                    centerSlot={!isLinuxPi ? <FileTabs /> : null}
                   />
                 </div>
               </div>

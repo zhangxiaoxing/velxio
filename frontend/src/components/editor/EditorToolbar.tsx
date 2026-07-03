@@ -98,9 +98,9 @@ interface EditorToolbarProps {
   setCompileLogs: (logs: CompilationLog[] | ((prev: CompilationLog[]) => CompilationLog[])) => void;
   /**
    * Optional element rendered between the left action group and the right
-   * action group. The editor passes <FileTabs /> here so the tabs share the
-   * same row as the toolbar — keeping every action icon pinned and visible
-   * regardless of how narrow the editor pane gets.
+   * action group. Normally empty (the slot just acts as a flexible spacer
+   * that keeps the right action icons pinned); private overlays may inject
+   * deployment-specific content here without forking the toolbar.
    */
   centerSlot?: React.ReactNode;
   /**
@@ -1671,8 +1671,10 @@ export const EditorToolbar = ({
             )}
           </div>
 
-          {/* Center slot — file tabs share the row so action icons stay pinned. */}
-          {centerSlot && <div className="toolbar-center-slot">{centerSlot}</div>}
+          {/* Center slot — a flexible spacer that keeps the right action group
+              pinned to the far right. Rendered unconditionally so the layout
+              holds even when no overlay supplies content here. */}
+          <div className="toolbar-center-slot">{centerSlot}</div>
 
           <div className="toolbar-group toolbar-group-right">
             {/* Hidden file input for project import. Accepts both .vlx
